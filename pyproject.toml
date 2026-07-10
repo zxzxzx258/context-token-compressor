@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "context-token-compressor"
+version = "1.0.0"
+description = "Context compression, protocol bridging, and provider routing for OpenAI-compatible clients"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Context Token Compressor contributors" }]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.34,<1.0",
+  "httpx>=0.28,<1.0",
+  "tiktoken>=0.8,<1.0",
+  "pydantic>=2.10,<3.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=9.0.3,<10.0"]
+lint = ["ruff>=0.11,<1.0"]
+security = ["bandit>=1.8,<2.0", "pip-audit>=2.8,<3.0"]
+release = ["build>=1.2,<2.0", "twine>=6.1,<7.0"]
+
+[project.scripts]
+ctc = "ctc.main:main"
+
+[tool.setuptools.packages.find]
+include = ["ctc*"]
+
+[tool.setuptools.package-data]
+ctc = ["static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]

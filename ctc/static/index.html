@@ -1,0 +1,1731 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Context Token Compressor 管理面板</title>
+  <style>
+    /* =========================================
+       OmniRoute 风格主题变量系统
+       ========================================= */
+    :root {
+      --font-ui: "Microsoft YaHei", "微软雅黑", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --bg: #f9fafb;
+      --bg-subtle: #f3f4f6;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --muted-soft: #94a3b8;
+
+      --blue: #6366f1;
+      --blue-soft: #e0e7ff;
+      --blue-weak: rgba(99, 102, 241, 0.08);
+      --green: #10b981;
+      --green-soft: #d1fae5;
+      --orange: #f59e0b;
+      --orange-soft: #fef3c7;
+      --red: #ef4444;
+      --red-soft: #fee2e2;
+
+      --border: #e2e8f0;
+      --line: #f1f5f9;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15, 23, 42, 0.03);
+      --shadow-lift: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -2px rgba(15, 23, 42, 0.04);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --sidebar-w: 260px;
+      --input-bg: #ffffff;
+      --table-head: #f8fafc;
+      --nav-hover: #f1f5f9;
+
+      --chart-grid: rgba(148, 163, 184, 0.22);
+      --chart-axis: rgba(148, 163, 184, 0.55);
+      --chart-label: #64748b;
+    }
+
+    html[data-theme="dark"] {
+      --bg: #0b0e14;
+      --bg-subtle: #10141e;
+      --panel: #161b22;
+      --text: #e6e6ef;
+      --muted: #a1a1aa;
+      --muted-soft: #71717a;
+
+      --blue: #6366f1;
+      --blue-soft: rgba(99, 102, 241, 0.15);
+      --blue-weak: rgba(99, 102, 241, 0.08);
+      --green: #22c55e;
+      --green-soft: rgba(34, 197, 94, 0.15);
+      --orange: #f59e0b;
+      --orange-soft: rgba(245, 158, 11, 0.15);
+      --red: #e54d5e;
+      --red-soft: rgba(229, 77, 94, 0.15);
+
+      --border: rgba(255, 255, 255, 0.08);
+      --line: rgba(255, 255, 255, 0.04);
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+      --shadow-lift: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
+      --input-bg: #0d1117;
+      --table-head: #10141e;
+      --nav-hover: rgba(255, 255, 255, 0.05);
+
+      --chart-grid: rgba(255, 255, 255, 0.06);
+      --chart-axis: rgba(255, 255, 255, 0.15);
+      --chart-label: #a1a1aa;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--bg); font-family: var(--font-ui); }
+    html[data-theme="dark"] { color-scheme: dark; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      /* 强制全局使用微软雅黑 */
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+
+    /* 面板内所有文本统一使用微软雅黑，包含数字、路径、日志和图表标签 */
+    .font-mono {
+      font-family: var(--font-ui) !important;
+    }
+
+    code, kbd, samp, pre {
+      font-family: var(--font-ui);
+      letter-spacing: 0;
+    }
+
+    /* =========================================
+       表单控件比例深度调优
+       ========================================= */
+    button, input, select, textarea, table, canvas, code, kbd, samp, pre { font-family: var(--font-ui); }
+
+    input, select {
+      background: var(--input-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px; /* 加大内边距，告别瘦长 */
+      min-height: 40px;   /* 提升基础高度，视觉更和谐 */
+      transition: all 0.2s ease;
+      width: 100%;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px var(--blue-soft);
+    }
+
+    /* 按钮重构优化 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 36px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--panel);
+      color: var(--text);
+      padding: 6px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--nav-hover);
+      border-color: var(--muted-soft);
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #ffffff;
+      box-shadow: 0 2px 8px var(--blue-soft);
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #4f46e5;
+      border-color: #4f46e5;
+      color: #ffffff;
+    }
+    html[data-theme="dark"] .btn-primary { color: #fff; }
+
+    .btn-danger { color: var(--red); border-color: var(--red-soft); background: transparent; }
+    .btn-danger:hover:not(:disabled) { background: var(--red); border-color: var(--red); color: #ffffff; }
+
+    .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); box-shadow: none; }
+    .btn-ghost:hover:not(:disabled) { background: var(--nav-hover); color: var(--text); }
+
+    .btn-sm { min-height: 32px; padding: 4px 12px; font-size: 12px; }
+
+    /* =========================================
+       两栏式主布局架构
+       ========================================= */
+    .app-shell { display: flex; min-height: 100vh; }
+
+    .sidebar {
+      width: var(--sidebar-w);
+      flex: 0 0 var(--sidebar-w);
+      background: var(--bg-subtle);
+      border-right: 1px solid var(--border);
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      z-index: 10;
+    }
+
+    .sidebar-brand {
+      color: var(--text); font-size: 18px; font-weight: 700;
+      padding: 0 12px 24px; display: flex; align-items: center; gap: 10px;
+    }
+    .sidebar-brand::before {
+      content: ""; display: inline-block; width: 24px; height: 24px;
+      background: var(--red); border-radius: 6px; box-shadow: 0 0 12px var(--red-soft);
+    }
+
+    .side-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+    .nav-item {
+      display: flex; align-items: center; gap: 12px; width: 100%; min-height: 38px;
+      border: none; border-radius: var(--radius-sm); background: transparent; color: var(--muted);
+      padding: 8px 12px; font-size: 14px; font-weight: 500; text-align: left; cursor: pointer; transition: all 0.2s;
+    }
+    .nav-item:hover { background: var(--nav-hover); color: var(--text); }
+    .nav-item.active { background: var(--blue-weak); color: var(--blue); font-weight: 600; }
+    .nav-icon { font-size: 16px; display: flex; align-items: center; justify-content: center; width: 20px; opacity: 0.8; }
+
+    .status-bar { display: flex; align-items: center; gap: 10px; padding: 16px 12px; margin-top: auto; border-top: 1px solid var(--border); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 8px var(--orange); }
+    .status-ok .status-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .status-error .status-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+    .status-text { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .status-bar .spacer { flex: 1; }
+
+    .main-area { flex: 1 1 0; min-width: 0; padding: 32px 40px; overflow-x: hidden; }
+    .view-section { display: none; animation: fadeIn 0.3s ease; }
+    .view-section.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+    .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+    .page-title { margin: 0; color: var(--text); font-size: 24px; font-weight: 700; letter-spacing: 0; }
+    .page-subtitle { margin-top: 4px; color: var(--muted); font-size: 14px; }
+
+    /* =========================================
+       卡片与模块
+       ========================================= */
+    .control-card, .main-panel {
+      margin-bottom: 20px; background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px;
+    }
+    .main-panel { padding: 0; overflow: hidden; }
+    .control-card h3 { margin: 0 0 6px; color: var(--text); font-size: 16px; font-weight: 600; }
+    .control-card .control-note { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+
+    .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--line); }
+    .panel-title { margin: 0; color: var(--text); font-size: 16px; font-weight: 600; }
+    .panel-meta { color: var(--muted); font-size: 13px; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .card { display: flex; flex-direction: column; padding: 20px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); transition: transform 0.2s, box-shadow 0.2s; }
+    .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+    .card-label { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
+    .card-value { margin-top: 12px; color: var(--text); font-size: 28px; font-weight: 700; line-height: 1; font-family: var(--font-ui); }
+    .card-note { margin-top: auto; padding-top: 12px; color: var(--muted); font-size: 12px; }
+    .card-note strong { color: var(--text); font-weight: 600; }
+    .metric-stack { display: flex; flex-direction: column; gap: 4px; }
+    .metric-subline { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .metering-pill { display: inline-flex; align-items: center; gap: 6px; }
+    .accent-green { color: var(--green); }
+    .accent-orange { color: var(--red); }
+
+    .mode-toggle, .log-tabs { display: inline-flex; background: var(--bg-subtle); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+    .mode-toggle button, .log-tab { background: transparent; border: none; border-radius: 6px; color: var(--muted); padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .mode-toggle button:hover, .log-tab:hover { color: var(--text); }
+    .mode-toggle button.active, .log-tab.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+
+    .log-source-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 24px 0; }
+    .source-filter { background: var(--panel); border: 1px solid var(--border); color: var(--muted); border-radius: 20px; padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .source-filter:hover { border-color: var(--blue); color: var(--text); }
+    .source-filter.active { background: var(--blue-weak); border-color: var(--blue); color: var(--blue); }
+
+    .table-wrap { overflow-x: auto; padding: 0 24px 24px; margin-top: 16px; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 900px; }
+    th, td { padding: 12px 16px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; font-size: 13px; }
+    th { color: var(--muted); background: var(--table-head); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0; }
+    th:first-child { border-top-left-radius: var(--radius-sm); border-bottom-left-radius: var(--radius-sm); }
+    th:last-child { border-top-right-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
+    tbody tr { transition: background 0.15s; }
+    tbody tr:hover { background-color: var(--nav-hover); }
+    .path-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-ui); }
+    .source-cell { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+    .error-cell { max-width: 300px; white-space: normal; color: var(--red); }
+
+    .badge { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .badge-ok { color: var(--green); background: var(--green-soft); }
+    .badge-error { color: var(--red); background: var(--red-soft); }
+    .badge-muted { color: var(--muted); background: var(--bg-subtle); }
+    .badge-info { color: var(--blue); background: var(--blue-soft); }
+
+    .range-group { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .range-group button { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--muted); padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .range-group button:hover { border-color: var(--blue); color: var(--text); }
+    .range-group button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+    /* =========================================
+       提供商与路由：结构与网格优化
+       ========================================= */
+    /* 全新两栏布局架构 */
+    .config-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 55fr) minmax(0, 45fr);
+      gap: 24px;
+      align-items: start; /* 阻止列拉伸对齐 */
+    }
+
+    .config-left-col {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .config-left-col .control-card { margin-bottom: 0; } /* 取消内部卡片的 margin，统一用 gap 控制 */
+
+    .sticky-panel {
+      position: sticky;
+      top: 24px;
+    }
+
+    /* 内部表单网格 */
+    .provider-form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .form-group label {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .form-group.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .provider-row, .routing-row { padding: 16px 0; border-bottom: 1px solid var(--line); }
+    .provider-row:last-child, .routing-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .provider-title, .routing-title { display: flex; align-items: center; justify-content: space-between; color: var(--text); font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .provider-detail, .routing-detail { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+    .provider-actions, .routing-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+    /* 修复路由编辑器网格结构 */
+    .routing-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+
+    .settings-row { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14px; margin-bottom: 16px; }
+    .settings-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--blue); cursor: pointer;}
+
+    .float-refresh { position: fixed; right: 32px; bottom: 24px; z-index: 40; height: 44px; border-radius: 22px; background: var(--blue); color: #fff; border: none; padding: 0 22px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 20px var(--blue-soft); display: flex; align-items: center; gap: 8px; transition: all 0.2s; }
+    .float-refresh:hover { transform: translateY(-2px); box-shadow: 0 12px 24px var(--blue-soft); }
+
+    .chart-wrap { height: 344px; padding: 20px 24px 48px; }
+    #trendChart { display: block; width: 100%; height: 100%; }
+
+    .pagination { display: flex; justify-content: center; gap: 6px; padding: 16px 24px 24px; }
+    .pagination button { min-width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+    .pagination button:hover:not(:disabled) { border-color: var(--blue); color: var(--text); }
+    .pagination button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .empty { padding: 32px; color: var(--muted); text-align: center; font-size: 14px; }
+    .footer-note { color: var(--muted); font-size: 12px; text-align: right; padding-top: 16px; }
+
+    @media (max-width: 1024px) {
+      .app-shell { flex-direction: column; }
+      .sidebar { width: 100%; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--border); padding: 16px; flex-direction: row; align-items: center; }
+      .sidebar-brand { padding: 0 24px 0 0; }
+      .side-nav { flex-direction: row; margin: 0; }
+      .nav-item { width: auto; min-height: 32px; padding: 6px 12px; }
+      .status-bar { margin-top: 0; border-top: none; padding: 0 0 0 24px; border-left: 1px solid var(--border); }
+      .main-area { padding: 24px; }
+
+      .config-layout { grid-template-columns: 1fr; }
+      .sticky-panel { position: static; }
+    }
+    @media (max-width: 768px) {
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .panel-header { flex-direction: column; align-items: flex-start; }
+      .float-refresh { right: 20px; bottom: 20px; }
+      .provider-form-grid { grid-template-columns: 1fr; }
+      .routing-editor { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">CTC</div>
+
+    <nav class="side-nav" aria-label="Context Token Compressor 导航">
+      <button class="nav-item active" type="button" data-view-target="viewOverview"><span class="nav-icon">▦</span><span>总览</span></button>
+      <button class="nav-item" type="button" data-view-target="viewTraffic"><span class="nav-icon">↔</span><span>流量日志</span></button>
+      <button class="nav-item" type="button" data-view-target="viewProviders"><span class="nav-icon">⌘</span><span>提供商与路由</span></button>
+      <button class="nav-item" type="button" data-view-target="viewProfiles"><span class="nav-icon">◇</span><span>来源策略</span></button>
+    </nav>
+
+    <div class="status-bar" id="sidebarStatus">
+      <span class="status-dot"></span>
+      <span class="status-text" id="statusText">加载中</span>
+      <span class="spacer"></span>
+      <button class="btn btn-sm" id="themeToggle" type="button">日间</button>
+      <button class="btn btn-danger btn-sm" id="restartBtn" type="button">重启</button>
+    </div>
+  </aside>
+
+  <main class="main-area">
+    <section id="viewOverview" class="view-section active">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Dashboard</h1>
+          <div class="page-subtitle">Context Token Compressor 代理状态监控与数据总览</div>
+        </div>
+      </div>
+
+      <div class="control-card">
+        <h3>时间范围</h3>
+        <p class="control-note" id="rangeLabel">统计范围：-</p>
+        <div class="range-group" id="rangeGroup">
+          <button type="button" data-range="1h">1小时</button>
+          <button type="button" data-range="24h" class="active">24小时</button>
+          <button type="button" data-range="7d">7天</button>
+          <button type="button" data-range="30d">30天</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;">
+          <input id="since" type="datetime-local" aria-label="开始时间">
+          <input id="until" type="datetime-local" aria-label="结束时间">
+        </div>
+        <div style="margin-top: 16px;">
+            <button id="customBtn" class="btn btn-sm" type="button">应用自定义范围</button>
+        </div>
+      </div>
+
+      <section class="stats-grid" id="statsGrid">
+        <article class="card"><div class="card-label">总请求数</div><div id="totalRequests" class="card-value">0</div><div class="card-note">进入 CTC 的模型请求</div></article>
+        <article class="card"><div class="card-label">压缩请求数</div><div id="compressedRequests" class="card-value">0</div><div class="card-note">含被压缩工具输出</div></article>
+        <article class="card"><div class="card-label">估算原始 Token</div><div id="originalTokens" class="card-value">0</div><div class="card-note">压缩前输入规模</div></article>
+        <article class="card"><div class="card-label">估算压缩后 Token</div><div id="compressedTokens" class="card-value">0</div><div class="card-note">转发给上游的规模</div></article>
+        <article class="card"><div class="card-label">累计节省 Token</div><div id="savedTokens" class="card-value accent-green">0</div><div class="card-note">规则压缩估算节省</div></article>
+        <article class="card"><div class="card-label">节省比例</div><div id="savedRatio" class="card-value accent-green">0%</div><div class="card-note">节省 / 原始 Token</div></article>
+        <article class="card"><div class="card-label">平均每请求节省</div><div id="avgSaved" class="card-value">0</div><div class="card-note">仅统计有节省的请求</div></article>
+        <article class="card"><div class="card-label">已计量请求</div><div id="meteredRequests" class="card-value">0</div><div id="meteredRequestsNote" class="card-note">覆盖 0%</div></article>
+        <article class="card"><div class="card-label">反事实基线输入</div><div id="baselineInputTokens" class="card-value">0</div><div id="baselineInputNote" class="card-note">未压缩输入基线</div></article>
+        <article class="card"><div class="card-label">上游实际输入</div><div id="actualInputTokens" class="card-value">0</div><div id="actualInputNote" class="card-note">真实 usage.input_tokens</div></article>
+        <article class="card"><div class="card-label">对齐节省 Token</div><div id="cacheAlignedSavedTokens" class="card-value accent-green">0</div><div id="cacheAlignedSavedNote" class="card-note">缓存命中保持不变</div></article>
+        <article class="card"><div class="card-label">错误请求</div><div id="errorCount" class="card-value accent-orange">0</div><div class="card-note">4xx/5xx 或代理错误</div></article>
+      </section>
+
+      <section class="main-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title" id="trendTitle">节省趋势曲线</h2>
+            <div id="trendLegend" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
+            <div class="mode-toggle">
+              <button type="button" data-trend-mode="request" class="active">按请求</button>
+              <button type="button" data-trend-mode="hour">按小时</button>
+            </div>
+            <div id="trendMeta" class="panel-meta">每个点代表一次模型请求；优先使用对齐计量，缺失时回退估算节省</div>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+      </section>
+    </section>
+
+    <section id="viewTraffic" class="view-section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">流量日志</h1>
+          <div class="page-subtitle">请求明细与错误排查</div>
+        </div>
+      </div>
+
+      <section class="main-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">流量数据</h2>
+          </div>
+          <div class="log-tabs" role="tablist">
+            <button id="recentTab" class="log-tab active" type="button" role="tab" aria-selected="true" aria-controls="recentLogView" data-log-tab="recent">请求 <span id="recentTabCount">0</span></button>
+            <button id="errorTab" class="log-tab" type="button" role="tab" aria-selected="false" aria-controls="errorLogView" data-log-tab="errors">错误 <span id="errorTabCount">0</span></button>
+          </div>
+        </div>
+
+        <div id="logSourceFilters" class="log-source-bar" aria-label="按来源筛选"></div>
+
+        <div id="recentLogView" class="log-view" role="tabpanel" aria-labelledby="recentTab">
+          <div style="padding: 16px 24px 0;">
+              <div id="recentMeta" class="panel-meta">-</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>模型</th><th>来源</th><th>路径</th><th>状态</th><th>压缩状态</th><th>可压缩原 Token</th><th>压缩后</th><th>节省</th><th>对齐计量</th><th>压缩项</th><th>耗时</th></tr></thead>
+              <tbody id="recentRows"><tr><td colspan="12" class="empty">加载中</td></tr></tbody>
+            </table>
+          </div>
+          <div id="recentPagination" class="pagination"></div>
+        </div>
+
+        <div id="errorLogView" class="log-view" role="tabpanel" aria-labelledby="errorTab" hidden>
+          <div style="padding: 16px 24px 0;">
+              <div id="errorMeta" class="panel-meta">-</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>模型</th><th>来源</th><th>路径</th><th>状态</th><th>耗时</th><th>错误明细</th></tr></thead>
+              <tbody id="errorRows"><tr><td colspan="7" class="empty">加载中</td></tr></tbody>
+            </table>
+          </div>
+          <div id="errorPagination" class="pagination"></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="viewProviders" class="view-section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">提供商与路由</h1>
+          <div class="page-subtitle">管理大模型提供商连接及来源分发规则</div>
+        </div>
+      </div>
+
+      <div class="config-layout">
+
+        <div class="config-left-col">
+          <div class="control-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
+                <h3 style="margin:0;">提供商连接</h3>
+                <span id="providerActiveMeta" class="badge badge-info">加载中</span>
+            </div>
+            <div id="providerMiniList"></div>
+          </div>
+
+          <div class="control-card">
+            <h3>来源路由规则 (Routing)</h3>
+            <p class="control-note">根据请求的来源 IP，将流量分发到不同的提供商。支持 '*' 匹配所有其他 IP。</p>
+            <label class="settings-row" style="margin-top: 16px; margin-bottom: 8px;">
+              <input id="providerRoutingEnabled" type="checkbox">
+              <span>启用路由匹配系统</span>
+            </label>
+            <div id="providerMiniRouting" style="margin: 16px 0;"></div>
+            <div style="display:flex;gap:12px;margin-top: 20px;">
+              <button id="addRoutingRule" class="btn" type="button">添加规则</button>
+              <button id="saveRoutingRules" class="btn btn-primary" type="button">保存所有路由设置</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="config-right-col">
+          <div class="control-card sticky-panel">
+            <h3>配置提供商</h3>
+            <p class="control-note" style="margin-bottom: 24px;">API Key 以私有文件权限保存，不会在统计面板明文显示。</p>
+
+            <form class="provider-form-grid" id="providerForm" autocomplete="off">
+              <input id="providerEditId" type="hidden" value="">
+
+              <div class="form-group">
+                <label for="providerName">配置名称</label>
+                <input id="providerName" type="text" placeholder="例如: DeepSeek Main" required>
+              </div>
+
+              <div class="form-group">
+                <label for="providerType">接口类型</label>
+                <select id="providerType">
+                  <option value="openai_responses">OpenAI 兼容接口</option>
+                  <option value="deepseek_chat_bridge">DeepSeek 专有桥接</option>
+                </select>
+              </div>
+
+              <div class="form-group full-width">
+                <label for="providerBaseUrl">端点 URL</label>
+                <input id="providerBaseUrl" type="url" placeholder="https://api..." required>
+              </div>
+
+              <div class="form-group full-width">
+                <label for="providerApiKey">API Key</label>
+                <input id="providerApiKey" type="password" placeholder="••••••••••••" autocomplete="new-password">
+              </div>
+
+              <div class="form-group">
+                <label for="providerModel">重写模型名 (可选)</label>
+                <input id="providerModel" type="text" placeholder="留空为默认">
+              </div>
+
+              <div class="form-group">
+                <label for="providerUserAgent">User-Agent (可选)</label>
+                <input id="providerUserAgent" type="text" placeholder="自定义 UA">
+              </div>
+
+              <div class="form-group full-width" style="flex-direction:row; gap:12px; margin-top:16px;">
+                <button id="providerSubmit" class="btn btn-primary" type="submit" style="flex:1;">保存配置</button>
+                <button id="providerCancelEdit" class="btn btn-ghost" type="button" style="flex:1;" hidden>取消编辑</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="viewProfiles" class="view-section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">来源策略</h1>
+          <div class="page-subtitle">不同客户端来源的压缩等级设定</div>
+        </div>
+        <div id="profileMeta" class="panel-meta">-</div>
+      </div>
+      <div class="control-card">
+        <h3 style="margin-bottom:8px;">策略映射</h3>
+        <p class="control-note">指定特定 IP 来源的工具词元压缩方式。默认推荐使用 <code>safe</code> 进行保守压缩。</p>
+        <div id="profileMiniList"></div>
+      </div>
+    </section>
+
+    <div id="lastUpdated" class="footer-note">-</div>
+  </main>
+</div>
+
+<button id="floatRefresh" class="float-refresh" type="button">
+    <span aria-hidden="true" style="font-size:16px;">⟳</span>
+    <span>立即刷新</span>
+</button>
+
+<script>
+    // =====================================================================
+    // JavaScript 逻辑完全保持不变
+    // =====================================================================
+    const fmt = new Intl.NumberFormat("zh-CN");
+    const shanghaiDateTime = new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai", hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    const shanghaiTime = new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai", hour12: false,
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    const shanghaiHourAxis = new Intl.DateTimeFormat("zh-CN", {
+      timeZone: "Asia/Shanghai", hourCycle: "h23",
+      month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+    });
+    const pct = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 1 });
+    const PAGE_SIZE = 10;
+    const UI_FONT_FAMILY = "\"Microsoft YaHei\", \"微软雅黑\", \"Segoe UI\", Arial, sans-serif";
+
+    let activeRange = "24h";
+    let activeTrendMode = "request";
+    let trendData = [];
+    let hourlyTrendData = [];
+    let recentData = [];
+    let errorData = [];
+    let recentTotal = 0;
+    let errorTotal = 0;
+    let trafficSources = [];
+    let profileSources = [];
+    let profileOptions = ["safe", "dev", "off"];
+    let providers = [];
+    let activeProvider = null;
+    let providerRouting = { enabled: false, rules: {}, rule_count: 0, source: "default" };
+    let recentCurrentPage = 1;
+    let errorCurrentPage = 1;
+    let customRangeActive = false;
+    let customSince = "";
+    let customUntil = "";
+    let activeLogTab = "recent";
+    let activeRecentSource = "";
+    let activeErrorSource = "";
+    let chartAnimProgress = 1;
+    let chartAnimFrame = 0;
+    let isLoading = false;
+
+    function byId(id) { return document.getElementById(id); }
+    function setText(id, value) { byId(id).textContent = value; }
+
+    function formatCompact(value, unit) {
+      const numeric = Number(value || 0);
+      const abs = Math.abs(numeric);
+      const suffixes = [{ threshold: 1e9, suffix: "B" }, { threshold: 1e6, suffix: "M" }, { threshold: 1e3, suffix: "K" }];
+      const match = suffixes.find(s => abs >= s.threshold);
+      if (!match) return unit ? `${fmt.format(Math.round(numeric))} ${unit}` : fmt.format(Math.round(numeric));
+      const scaled = numeric / match.threshold;
+      const digits = Math.abs(scaled) >= 100 ? 0 : Math.abs(scaled) >= 10 ? 1 : 2;
+      const text = scaled.toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: digits }).replace(/\.0$/, "");
+      return unit ? `${text}${match.suffix} ${unit}` : `${text}${match.suffix}`;
+    }
+
+    function formatTokens(value) { return formatCompact(value, "Token"); }
+    function formatTokenValue(value) { return formatCompact(value, ""); }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&#039;");
+    }
+
+    function formatTime(value, withSeconds) {
+      if (!value) return "-";
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return String(value);
+      return withSeconds !== false ? shanghaiDateTime.format(d) : shanghaiTime.format(d) + " " + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+
+    function formatClockTime(value) {
+      if (!value) return "-";
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return String(value);
+      return shanghaiTime.format(d);
+    }
+
+    function formatHourAxisTime(value) {
+      if (!value) return "-";
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return String(value);
+      const parts = Object.fromEntries(
+        shanghaiHourAxis.formatToParts(d)
+          .filter(part => part.type !== "literal")
+          .map(part => [part.type, part.value])
+      );
+      return `${Number(parts.month)}-${Number(parts.day)} ${parts.hour}:${parts.minute}`;
+    }
+
+    function toggleSection(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle("collapsed");
+    }
+
+    function setStatus(state, text) {
+      const bar = byId("sidebarStatus");
+      bar.className = "status-bar " + (state === "ok" ? "status-ok" : state === "error" ? "status-error" : "");
+      setText("statusText", text);
+    }
+
+    function setLoadingState(loading) {
+      isLoading = loading;
+      const refresh = byId("floatRefresh");
+      if (refresh) {
+        refresh.disabled = loading;
+        refresh.innerHTML = loading ? '<span aria-hidden="true" style="font-size:16px;">⟳</span><span>刷新中...</span>' : '<span aria-hidden="true" style="font-size:16px;">⟳</span><span>立即刷新</span>';
+      }
+    }
+
+    function setActiveView(viewId) {
+      const target = viewId || "viewOverview";
+      document.querySelectorAll(".view-section").forEach(section => {
+        section.classList.toggle("active", section.id === target);
+      });
+      document.querySelectorAll("[data-view-target]").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.viewTarget === target);
+      });
+      setTimeout(drawChart, 0);
+    }
+
+    function setTheme(theme) {
+      const next = theme === "dark" ? "dark" : "light";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("ctc-theme", next);
+      const btn = byId("themeToggle");
+      if (btn) btn.textContent = next === "dark" ? "日间" : "暗夜";
+      drawChart();
+    }
+
+    function setActiveLogTab(tab) {
+      activeLogTab = tab === "errors" ? "errors" : "recent";
+      const recentActive = activeLogTab === "recent";
+      byId("recentLogView").hidden = !recentActive;
+      byId("errorLogView").hidden = recentActive;
+      byId("recentTab").classList.toggle("active", recentActive);
+      byId("errorTab").classList.toggle("active", !recentActive);
+      byId("recentTab").setAttribute("aria-selected", recentActive ? "true" : "false");
+      byId("errorTab").setAttribute("aria-selected", recentActive ? "false" : "true");
+      renderLogSourceFilters();
+    }
+
+    function updateLogTabCounts() {
+      setText("recentTabCount", fmt.format(recentTotal || 0));
+      setText("errorTabCount", fmt.format(errorTotal || 0));
+    }
+
+    function activeLogSource() {
+      return activeLogTab === "errors" ? activeErrorSource : activeRecentSource;
+    }
+
+    function renderLogSourceFilters() {
+      const el = byId("logSourceFilters");
+      if (!el) return;
+      const activeSource = activeLogSource();
+      const allCount = activeLogTab === "errors" ? errorTotal : recentTotal;
+      const buttons = [
+        '<button type="button" class="source-filter' + (!activeSource ? ' active' : '') + '" data-log-source="">全部 (' + fmt.format(allCount || 0) + ')</button>'
+      ];
+      (trafficSources || []).forEach(source => {
+        const host = source.client_host || "";
+        if (!host) return;
+        const count = activeLogTab === "errors" ? Number(source.error_count || 0) : Number(source.request_count || 0);
+        const label = sourceLabel(source);
+        buttons.push(
+          '<button type="button" class="source-filter' + (host === activeSource ? ' active' : '') +
+          '" data-log-source="' + escapeHtml(host) + '" title="' + escapeHtml(host) + '">' +
+          escapeHtml(label) + ' (' + fmt.format(count) + ')</button>'
+        );
+      });
+      el.innerHTML = buttons.join("");
+    }
+
+    function setActiveLogSource(source) {
+      const next = source || "";
+      if (activeLogTab === "errors") {
+        if (next === activeErrorSource) return;
+        activeErrorSource = next;
+        errorCurrentPage = 1;
+      } else {
+        if (next === activeRecentSource) return;
+        activeRecentSource = next;
+        recentCurrentPage = 1;
+      }
+      renderLogSourceFilters();
+      loadData(false);
+    }
+
+    function buildParams(useCustom) {
+      const params = new URLSearchParams();
+      if (useCustom) {
+        if (customSince) params.set("since", new Date(customSince).toISOString());
+        if (customUntil) params.set("until", new Date(customUntil).toISOString());
+      } else {
+        params.set("range", activeRange);
+      }
+      if (recentCurrentPage > 1) params.set("recent_offset", String((recentCurrentPage - 1) * PAGE_SIZE));
+      params.set("recent_limit", String(PAGE_SIZE));
+      if (errorCurrentPage > 1) params.set("error_offset", String((errorCurrentPage - 1) * PAGE_SIZE));
+      params.set("error_limit", String(PAGE_SIZE));
+      if (activeRecentSource) params.set("recent_source", activeRecentSource);
+      if (activeErrorSource) params.set("error_source", activeErrorSource);
+      params.set("trend_recent_limit", activeTrendMode === "request" ? "50" : "0");
+      if (activeTrendMode === "hour") params.set("trend_hourly", "1");
+      return params;
+    }
+
+    function sourceLabel(row) {
+      if (!row) return "-";
+      const host = (row.client_host || "").trim();
+      if (host === "127.0.0.1" || host === "::1" || host === "localhost") return "本机客户端";
+      return host ? "远程客户端 (" + host + ")" : "未知";
+    }
+
+    function profileLabel(profile) {
+      const map = { safe: "保守", dev: "开发", off: "关闭" };
+      return map[profile] || profile || "off";
+    }
+
+    function statusBadge(code) {
+      if (!code) return '<span class="badge badge-muted">-</span>';
+      if (code >= 200 && code < 300) return '<span class="badge badge-ok">' + code + '</span>';
+      if (code >= 400) return '<span class="badge badge-error">' + code + '</span>';
+      return '<span class="badge badge-muted">' + code + '</span>';
+    }
+
+    function compressedLabel(row) {
+      const count = Number(row.compressed_items_count || 0);
+      const profile = row.profile || "";
+      if (profile === "off") return "关闭";
+      if (count > 0) return "已压缩 (" + count + ")";
+      return "无压缩";
+    }
+
+    function meteringCell(row) {
+      if (!row || !row.metering_source) {
+        const reason = escapeHtml((row && row.metering_reason) || "上游未返回 usage，无法做对齐计量");
+        return '<div class="metric-stack" title="' + reason + '">' +
+          '<span class="badge badge-muted">未计量</span>' +
+          '<span class="metric-subline">估算节省视图</span>' +
+          '</div>';
+      }
+      const saved = Number(row.cache_aligned_saved_tokens || 0);
+      const ratio = Number(row.cache_aligned_saved_ratio || 0);
+      const reason = escapeHtml(row.metering_reason || "");
+      return '<div class="metric-stack" title="' + reason + '">' +
+        '<span class="metering-pill"><span class="badge badge-info">已计量</span><span class="metric-subline mono">' + escapeHtml(row.metering_source) + '</span></span>' +
+        '<span class="metric-subline"><strong>' + formatTokens(saved) + '</strong> · ' + pct.format(ratio) + '</span>' +
+        '</div>';
+    }
+
+    function providerLabelById(id) {
+      const provider = providers.find(p => p.id === id);
+      if (!provider) return id || "-";
+      const bits = [provider.name || provider.id];
+      if (provider.model) bits.push(provider.model);
+      if (provider.provider_type_label || provider.provider_type) bits.push(provider.provider_type_label || provider.provider_type);
+      return bits.join(" · ");
+    }
+
+    function providerStatusBadge(provider) {
+      const status = provider?.last_status || "";
+      if (status === "ok") return '<span class="badge badge-ok">检查通过</span>';
+      if (status === "auth_error") return '<span class="badge badge-error">认证失败</span>';
+      if (status === "error") return '<span class="badge badge-error">检查异常</span>';
+      return '<span class="badge badge-muted">未检查</span>';
+    }
+
+    function providerOptions(selectedId) {
+      return providers.map(provider => {
+        const selected = provider.id === selectedId ? " selected" : "";
+        return '<option value="' + escapeHtml(provider.id) + '"' + selected + '>' + escapeHtml(providerLabelById(provider.id)) + '</option>';
+      }).join("");
+    }
+
+    function renderPagination(id, total, current, cb) {
+      const el = byId(id);
+      if (!total || total <= PAGE_SIZE) { el.innerHTML = ""; return; }
+      const pages = Math.ceil(total / PAGE_SIZE);
+      let html = "";
+      html += '<button type="button"' + (current <= 1 ? " disabled" : "") + ' data-page="' + (current - 1) + '">←</button>';
+      for (let p = 1; p <= pages; p++) {
+        if (p > 3 && p < pages - 2 && Math.abs(p - current) > 2) {
+          if (p === 4) html += '<span style="color:var(--muted);padding:0 4px;">...</span>';
+          continue;
+        }
+        html += '<button type="button" data-page="' + p + '"' + (p === current ? ' class="active"' : "") + '>' + p + '</button>';
+      }
+      html += '<button type="button"' + (current >= pages ? " disabled" : "") + ' data-page="' + (current + 1) + '">→</button>';
+      el.innerHTML = html;
+      el.querySelectorAll("button[data-page]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const page = Number(btn.dataset.page);
+          if (page && page !== current) cb(page);
+        });
+      });
+    }
+
+    function renderRecent() {
+      setText("recentMeta", recentTotal ? "共 " + fmt.format(recentTotal) + " 条记录" : "暂无数据");
+      updateLogTabCounts();
+      if (!recentData.length) {
+        byId("recentRows").innerHTML = '<tr><td colspan="12" class="empty">暂无流量数据</td></tr>';
+        renderLogSourceFilters();
+        return;
+      }
+      byId("recentRows").innerHTML = recentData.map(row => {
+        const saved = Number(row.estimated_saved_tokens || 0);
+        return '<tr>' +
+          '<td>' + escapeHtml(formatTime(row.timestamp)) + '</td>' +
+          '<td>' + escapeHtml(row.model || "-") + '</td>' +
+          '<td class="source-cell" title="' + escapeHtml(row.client_host || "") + '">' + escapeHtml(sourceLabel(row)) + '</td>' +
+          '<td class="path-cell" title="' + escapeHtml(row.path || "") + '">' + escapeHtml(row.path || "-") + '</td>' +
+          '<td>' + statusBadge(row.status_code) + '</td>' +
+          '<td>' + compressedLabel(row) + '</td>' +
+          '<td>' + formatTokens(row.estimated_original_tokens) + '</td>' +
+          '<td>' + formatTokens(row.estimated_compressed_tokens) + '</td>' +
+          '<td style="font-weight:600; color:' + (saved > 0 ? "var(--green)" : "var(--muted)") + '">' + formatTokens(saved) + '</td>' +
+          '<td>' + meteringCell(row) + '</td>' +
+          '<td>' + fmt.format(row.compressed_items_count || 0) + '</td>' +
+          '<td>' + fmt.format(row.latency_ms || 0) + ' ms</td>' +
+          '</tr>';
+      }).join("");
+      renderPagination("recentPagination", recentTotal, recentCurrentPage, page => { recentCurrentPage = page; loadData(false); });
+      renderLogSourceFilters();
+    }
+
+    function renderErrors() {
+      setText("errorMeta", errorTotal ? "发现 " + fmt.format(errorTotal) + " 条错误" : "系统运行健康");
+      updateLogTabCounts();
+      if (!errorData.length) {
+        byId("errorRows").innerHTML = '<tr><td colspan="7" class="empty">暂无错误日志</td></tr>';
+        renderLogSourceFilters();
+        return;
+      }
+      byId("errorRows").innerHTML = errorData.map(row =>
+        '<tr>' +
+          '<td>' + escapeHtml(formatTime(row.timestamp)) + '</td>' +
+          '<td>' + escapeHtml(row.model || "-") + '</td>' +
+          '<td class="source-cell" title="' + escapeHtml(row.client_host || "") + '">' + escapeHtml(sourceLabel(row)) + '</td>' +
+          '<td class="path-cell" title="' + escapeHtml(row.path || "") + '">' + escapeHtml(row.path || "-") + '</td>' +
+          '<td>' + statusBadge(row.status_code) + '</td>' +
+          '<td>' + fmt.format(row.latency_ms || 0) + ' ms</td>' +
+          '<td class="error-cell">' + escapeHtml(row.error || "") + '</td>' +
+        '</tr>'
+      ).join("");
+      renderPagination("errorPagination", errorTotal, errorCurrentPage, page => { errorCurrentPage = page; loadData(false); });
+      renderLogSourceFilters();
+    }
+
+    const adminTokenKey = "ctc-admin-token";
+
+    function adminToken(forcePrompt) {
+      if (!forcePrompt) {
+        const existing = sessionStorage.getItem(adminTokenKey);
+        if (existing) return existing;
+      }
+      const value = window.prompt("CTC 管理令牌") || "";
+      if (value) sessionStorage.setItem(adminTokenKey, value);
+      return value;
+    }
+
+    async function adminFetch(path, options) {
+      const requestOptions = Object.assign({}, options || {});
+      const headers = new Headers(requestOptions.headers || {});
+      headers.set("Authorization", "Bearer " + adminToken(false));
+      requestOptions.headers = headers;
+      let response = await fetch(path, requestOptions);
+      if (response.status === 401) {
+        sessionStorage.removeItem(adminTokenKey);
+        headers.set("Authorization", "Bearer " + adminToken(true));
+        response = await fetch(path, requestOptions);
+      }
+      return response;
+    }
+
+    async function loadProviders() {
+      try {
+        const res = await adminFetch("/api/providers", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        providers = data.providers || [];
+        activeProvider = data.active_provider || data.active || null;
+        renderProviderMini();
+      } catch (e) {
+        byId("providerActiveMeta").textContent = "加载失败: " + e.message;
+        byId("providerActiveMeta").className = "badge badge-error";
+      }
+    }
+
+    function renderProviderMini() {
+      const activeId = activeProvider ? activeProvider.id : null;
+      const activeType = activeProvider?.provider_type_label || activeProvider?.provider_type || "-";
+
+      if(activeProvider) {
+         setText("providerActiveMeta", activeProvider.name + " (" + activeType + ")");
+         byId("providerActiveMeta").className = "badge badge-ok";
+      } else {
+         setText("providerActiveMeta", "无活跃连接");
+         byId("providerActiveMeta").className = "badge badge-muted";
+      }
+
+      const html = providers.map(p => {
+        const isActive = p.id === activeId;
+        const providerType = p.provider_type_label || p.provider_type || "-";
+        const routeName = providerLabelById(p.id);
+        const model = p.model || "默认";
+        const baseUrl = p.base_url || "-";
+        const keyText = p.has_api_key ? "Key 已配置" : "无 Key";
+        return '<div class="provider-row">' +
+          '<div class="provider-title"><span>' + escapeHtml(p.name || p.id) + '</span>' + (isActive ? '<span class="badge badge-info">全局活跃</span>' : '') + '</div>' +
+          '<div class="provider-detail">' + escapeHtml(providerType) + ' · ' + escapeHtml(model) + '</div>' +
+          '<div class="provider-detail">' + escapeHtml(baseUrl) + '</div>' +
+          '<div class="provider-detail" style="margin-top:6px; display:flex; gap:6px;">' + providerStatusBadge(p) + '<span class="badge badge-muted">' + escapeHtml(keyText) + '</span></div>' +
+          (p.last_message ? '<div class="provider-detail" style="margin-top:4px; color:var(--red);">' + escapeHtml(p.last_message) + '</div>' : '') +
+          '<div class="provider-actions">' +
+          (!isActive ? '<button class="btn btn-sm" data-provider-action="activate" data-provider-id="' + escapeHtml(p.id) + '">设为活跃</button>' : '') +
+          '<button class="btn btn-sm" data-provider-action="edit" data-provider-id="' + escapeHtml(p.id) + '">配置</button>' +
+          '<button class="btn btn-sm" data-provider-action="check" data-provider-id="' + escapeHtml(p.id) + '">连通性测试</button>' +
+          '<button class="btn btn-danger btn-sm" data-provider-action="delete" data-provider-id="' + escapeHtml(p.id) + '">删除</button>' +
+          '</div></div>';
+      }).join("");
+      byId("providerMiniList").innerHTML = html || '<div class="empty">暂无已配置的提供商</div>';
+    }
+
+    async function saveProvider(e) {
+      e.preventDefault();
+      const id = byId("providerEditId").value;
+      const modelValue = byId("providerModel").value;
+      const body = {
+        name: byId("providerName").value,
+        provider_type: byId("providerType").value,
+        base_url: byId("providerBaseUrl").value,
+        api_key: byId("providerApiKey").value || undefined,
+        model: id ? modelValue : modelValue || undefined,
+        forwarded_user_agent: byId("providerUserAgent").value || undefined
+      };
+      try {
+        let res;
+        if (id) {
+          res = await adminFetch("/api/providers/" + id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        } else {
+          res = await adminFetch("/api/providers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        }
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        resetProviderForm();
+        await loadProviders();
+      } catch (err) {
+        setStatus("error", "保存失败: " + err.message);
+      }
+    }
+
+    function resetProviderForm() {
+      byId("providerForm").reset();
+      byId("providerEditId").value = "";
+      byId("providerSubmit").textContent = "保存配置";
+      byId("providerCancelEdit").hidden = true;
+    }
+
+    function editProvider(id) {
+      const provider = providers.find(p => p.id === id);
+      if (!provider) return;
+      byId("providerEditId").value = provider.id;
+      byId("providerName").value = provider.name || "";
+      byId("providerType").value = provider.provider_type || "openai_responses";
+      byId("providerBaseUrl").value = provider.base_url || "";
+      byId("providerApiKey").value = "";
+      byId("providerApiKey").placeholder = provider.has_api_key ? "留空保留已存 Key" : "API Key";
+      byId("providerModel").value = provider.model || "";
+      byId("providerUserAgent").value = provider.forwarded_user_agent || "";
+      byId("providerSubmit").textContent = "更新配置";
+      byId("providerCancelEdit").hidden = false;
+      byId("providerName").focus();
+    }
+
+    async function activateProvider(id) {
+      try {
+        const res = await adminFetch("/api/providers/" + id + "/activate", { method: "POST" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        await loadProviders();
+        await loadData(false);
+      } catch (err) {
+        setStatus("error", "切换失败: " + err.message);
+      }
+    }
+
+    async function checkProvider(id) {
+      try {
+        const res = await adminFetch("/api/providers/" + id + "/check", { method: "POST" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        providers = data.providers || providers;
+        activeProvider = data.active_provider || activeProvider;
+        renderProviderMini();
+        const provider = data.provider || {};
+        const statusText = provider.last_status === "ok" ? "通过" : "未通过";
+        alert("测试" + statusText + "：" + (provider.last_message || provider.last_status || "无详细返回"));
+      } catch (err) {
+        alert("连通性测试失败: " + err.message);
+      }
+    }
+
+    async function deleteProvider(id) {
+      if (!confirm("确认删除此提供商？此操作不可逆。")) return;
+      try {
+        const res = await adminFetch("/api/providers/" + id, { method: "DELETE" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        await loadProviders();
+        await loadData(false);
+      } catch (err) {
+        setStatus("error", "删除失败: " + err.message);
+      }
+    }
+
+    async function loadProfiles() {
+      try {
+        const res = await adminFetch("/api/profiles", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        profileOptions = data.profiles || profileOptions;
+        profileSources = data.sources || [];
+        renderProfileMini();
+      } catch (e) {
+        setText("profileMeta", "配置读取失败");
+      }
+    }
+
+    function renderProfileMini() {
+      setText("profileMeta", profileSources.length ? fmt.format(profileSources.length) + " 个检测到的来源" : "暂无来源");
+      if (!profileSources.length) {
+        byId("profileMiniList").innerHTML = '<div class="empty">暂无网络客户端活动</div>';
+        return;
+      }
+      byId("profileMiniList").innerHTML = profileSources.map(s => {
+        const host = s.client_host || "";
+        const name = s.source || host || "未知";
+        const selected = s.effective_profile || "off";
+        const opts = profileOptions.map(p => '<option value="' + escapeHtml(p) + '"' + (p === selected ? " selected" : "") + '>' + escapeHtml(profileLabel(p)) + '</option>').join("");
+        return '<div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);">' +
+          '<div style="flex:1;min-width:0; overflow:hidden;">' +
+             '<div style="font-weight:600; text-overflow:ellipsis; white-space:nowrap; font-size:14px;" title="' + escapeHtml(host) + '">' + escapeHtml(name) + '</div>' +
+             '<div style="color:var(--muted); font-size:12px; margin-top:2px;">' + escapeHtml(host) + '</div>' +
+          '</div>' +
+          '<select style="max-width:140px;" data-profile-host="' + escapeHtml(host) + '">' + opts + '</select>' +
+          '</div>';
+      }).join("");
+      document.querySelectorAll("[data-profile-host]").forEach(sel => {
+        sel.addEventListener("change", async () => {
+          const host = sel.dataset.profileHost || "";
+          sel.disabled = true;
+          try {
+            const res = await adminFetch("/api/profiles", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ client_host: host, profile: sel.value })
+            });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            const data = await res.json();
+            profileSources = data.sources || [];
+            renderProfileMini();
+            await loadData(false);
+          } catch (err) {
+            setStatus("error", "保存策略失败: " + err.message);
+          } finally {
+            sel.disabled = false;
+          }
+        });
+      });
+    }
+
+    async function loadRouting() {
+      try {
+        const res = await adminFetch("/api/providers", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        providers = data.providers || providers;
+        activeProvider = data.active_provider || activeProvider;
+        providerRouting = data.provider_routing || providerRouting;
+        renderRoutingMini();
+      } catch (e) {}
+    }
+
+    function renderRoutingMini() {
+      byId("providerRoutingEnabled").checked = providerRouting.enabled || false;
+      const rules = providerRouting.rules || {};
+      const entries = Object.entries(rules);
+      if (!entries.length) {
+        byId("providerMiniRouting").innerHTML = '<div class="empty" style="border:1px dashed var(--border); border-radius:var(--radius-sm);">无自定义路由规则。<br/>添加规则后：左侧填入客户端 IP，右侧绑定模型渠道。</div>';
+        return;
+      }
+      byId("providerMiniRouting").innerHTML = entries.map(([host, pid]) =>
+        '<div class="routing-row" data-routing-host="' + escapeHtml(host) + '">' +
+          '<div class="routing-title"><span>' + escapeHtml(host) + '</span><span class="badge badge-info">' + escapeHtml(providerLabelById(pid)) + '</span></div>' +
+          '<div class="routing-editor">' +
+          '<input data-routing-host-input value="' + escapeHtml(host) + '" aria-label="客户端来源地址">' +
+          '<select data-routing-provider-select aria-label="提供商通道">' + providerOptions(pid) + '</select>' +
+          '</div>' +
+          '<div class="routing-actions">' +
+            '<button class="btn btn-sm" data-routing-update="' + escapeHtml(host) + '">更新规则</button>' +
+            '<button class="btn btn-danger btn-sm" data-routing-remove="' + escapeHtml(host) + '">移除</button>' +
+          '</div>' +
+        '</div>'
+      ).join("");
+    }
+
+    async function saveProviderRouting() {
+      providerRouting.enabled = byId("providerRoutingEnabled").checked;
+      try {
+        const res = await adminFetch("/api/runtime-config/provider-routing", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(providerRouting)
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        await loadRouting();
+        setStatus("ok", "路由保存成功");
+      } catch (err) {
+        setStatus("error", "路由保存失败: " + err.message);
+      }
+    }
+
+    function removeRoutingRule(host) {
+      if (!confirm("确定移除指向 " + (host || "*") + " 的路由规则？")) return;
+      delete providerRouting.rules[host];
+      renderRoutingMini();
+    }
+
+    function addProviderRoutingRow(host, pid) {
+      const container = byId("providerMiniRouting");
+      const draftId = "draft-" + Date.now().toString(36);
+      pid = pid || activeProvider?.id || providers[0]?.id || "";
+      if (!Object.keys(providerRouting.rules || {}).length) {
+        container.innerHTML = "";
+      }
+      container.insertAdjacentHTML("afterbegin",
+        '<div class="routing-row" data-routing-draft="' + draftId + '">' +
+          '<div class="routing-title"><span>新增规则</span><span class="badge badge-info">尚未保存</span></div>' +
+          '<div class="routing-editor">' +
+            '<input data-routing-host-input value="' + escapeHtml(host || "") + '" placeholder="例如 192.0.2.10 或 *" aria-label="客户端来源地址">' +
+            '<select data-routing-provider-select aria-label="提供商通道">' + providerOptions(pid) + '</select>' +
+          '</div>' +
+          '<div class="routing-actions">' +
+            '<button class="btn btn-sm" data-routing-create="' + draftId + '">新增规则</button>' +
+            '<button class="btn btn-secondary btn-sm" data-routing-cancel="' + draftId + '">取消</button>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    function updateRoutingRule(oldHost, row) {
+      const hostInput = row.querySelector("[data-routing-host-input]");
+      const providerSelect = row.querySelector("[data-routing-provider-select]");
+      const newHost = (hostInput?.value || "").trim();
+      const providerId = providerSelect?.value || "";
+      if (!newHost) {
+        setStatus("error", "IP 规则不能为空");
+        return;
+      }
+      if (!providerId) {
+        setStatus("error", "未选择可用提供商");
+        return;
+      }
+      if (oldHost !== newHost) delete providerRouting.rules[oldHost];
+      providerRouting.rules[newHost] = providerId;
+      renderRoutingMini();
+    }
+
+    function cancelRoutingDraft(row) {
+      row.remove();
+      if (!Object.keys(providerRouting.rules || {}).length && !byId("providerMiniRouting").querySelector("[data-routing-draft]")) {
+        renderRoutingMini();
+      }
+    }
+
+    async function restartCtc() {
+      if (!confirm("⚠️ 危险操作：确认重启 CTC 系统服务？当前正在进行的代理请求将会断开。")) return;
+      try {
+        const res = await adminFetch("/api/admin/restart", { method: "POST" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        setStatus("ok", "重启指令已发送...");
+        setTimeout(() => loadData(false), 3000);
+      } catch (err) {
+        setStatus("error", "重启受阻: " + err.message);
+      }
+    }
+
+    function buildRequestTrend(rows) {
+      return (rows || []).slice().sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)).map((row, i) => ({
+        sequence: i + 1, timestamp: row.timestamp,
+        chart_index: i,
+        saved_tokens_estimated: Number(row.estimated_saved_tokens || 0),
+        saved_tokens_metered: Number(row.cache_aligned_saved_tokens || 0),
+        saved_tokens: Number(row.cache_aligned_saved_tokens || 0) > 0 ? Number(row.cache_aligned_saved_tokens || 0) : Number(row.estimated_saved_tokens || 0),
+        original_tokens: Number(row.estimated_original_tokens || 0),
+        compressed_tokens: Number(row.estimated_compressed_tokens || 0),
+        status_code: row.status_code, path: row.path || "",
+        source: sourceLabel(row), client_host: row.client_host || ""
+      }));
+    }
+
+    function buildHourlyTrend(rows) {
+      return (rows || []).map((row, i) => ({
+        sequence: i + 1, timestamp: row.bucket, bucket: row.bucket,
+        chart_index: i,
+        saved_tokens_estimated: Number(row.saved_tokens || 0),
+        saved_tokens_metered: Number(row.cache_aligned_saved_tokens || 0),
+        saved_tokens: Number(row.cache_aligned_saved_tokens || 0) > 0 ? Number(row.cache_aligned_saved_tokens || 0) : Number(row.saved_tokens || 0),
+        request_count: Number(row.request_count || 0),
+        source: sourceLabel(row), client_host: row.client_host || ""
+      }));
+    }
+
+    function activeTrendRows() { return activeTrendMode === "hour" ? hourlyTrendData : trendData; }
+
+    function updateTrendHeader() {
+      const rows = activeTrendRows();
+      const sourceCount = new Set(rows.map(r => r.source || "-")).size;
+      const groups = groupTrendRows(rows);
+      const aggregateRows = aggregateTrendRows(rows);
+      byId("trendLegend").innerHTML = rows.length ? groups.map(g =>
+        '<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;">' +
+        '<span style="width:8px;height:8px;border-radius:50%;background:' + g.color.line + ';"></span>' +
+        escapeHtml(g.source) + '</span>'
+      ).join("") : "";
+      if (activeTrendMode === "hour") {
+        setText("trendTitle", "时间线：每小时节省量（优先真实计量）");
+        setText("trendMeta", fmt.format(aggregateRows.length) + " 个时间窗口 · " + sourceCount + " 个节点");
+      } else {
+        setText("trendTitle", "请求瀑布：单次请求节省量（优先真实计量）");
+        setText("trendMeta", fmt.format(rows.length) + " 次采样 · " + sourceCount + " 条独立来源曲线");
+      }
+    }
+
+    const trendPalettes = [
+      { line: "#3b82f6", fill: "rgba(59,130,246,0.17)" },
+      { line: "#10b981", fill: "rgba(16,185,129,0.16)" },
+      { line: "#a855f7", fill: "rgba(168,85,247,0.17)" },
+      { line: "#f97316", fill: "rgba(249,115,22,0.15)" },
+      { line: "#ef4444", fill: "rgba(239,68,68,0.16)" },
+      { line: "#06b6d4", fill: "rgba(6,182,212,0.14)" },
+      { line: "#eab308", fill: "rgba(234,179,8,0.14)" },
+      { line: "#ec4899", fill: "rgba(236,72,153,0.14)" },
+      { line: "#6366f1", fill: "rgba(99,102,241,0.15)" }
+    ];
+
+    function sourcePalette(idx) {
+      return trendPalettes[idx % trendPalettes.length];
+    }
+
+    function groupTrendRows(rows) {
+      const groups = new Map();
+      (rows || []).forEach(row => {
+        const src = row.source || "-";
+        if (!groups.has(src)) groups.set(src, []);
+        groups.get(src).push(row);
+      });
+      return Array.from(groups.entries()).map(([src, items], i) => ({
+        source: src,
+        color: sourcePalette(i),
+        rows: items.slice().sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      }));
+    }
+
+    function trendKey(row) { return row?.bucket || row?.timestamp || ""; }
+
+    function aggregateTrendRows(rows) {
+      if (activeTrendMode !== "hour") return [];
+      const buckets = new Map();
+      (rows || []).forEach(row => {
+        const key = trendKey(row);
+        if (!key) return;
+        if (!buckets.has(key)) {
+          buckets.set(key, { timestamp: key, bucket: key, saved_tokens: 0, request_count: 0, source: "", client_host: "" });
+        }
+        const bucket = buckets.get(key);
+        bucket.saved_tokens += Number(row.saved_tokens || 0);
+        bucket.request_count += Number(row.request_count || 0);
+      });
+      return Array.from(buckets.values()).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+
+    function smoothPath(ctx, points) {
+      if (!points.length) return;
+      ctx.moveTo(points[0][0], points[0][1]);
+      if (points.length === 1) return;
+      for (let i = 0; i < points.length - 1; i++) {
+        const c = points[i], n = points[i + 1];
+        ctx.bezierCurveTo(c[0] + (n[0] - c[0]) * 0.42, c[1], c[0] + (n[0] - c[0]) * 0.58, n[1], n[0], n[1]);
+      }
+    }
+
+    function xForIndex(index, total, x0, x1) {
+      if (total <= 1) return (x0 + x1) / 2;
+      return x0 + (x1 - x0) * (index / (total - 1));
+    }
+
+    function yForValue(value, y0, y1, maxV, ease) {
+      const targetY = y0 - (y0 - y1) * (Number(value || 0) / maxV);
+      return y0 - (y0 - targetY) * ease;
+    }
+
+    function chartCssVar(name, fallback) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+    }
+
+    function drawStroke(ctx, points, color, width, shadow, options = {}) {
+      if (points.length < 2) return;
+      const isolate = options.isolate !== false;
+      const gapWidth = Math.max(width + 3.5, width * 2.25);
+      ctx.save();
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      if (isolate) {
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.lineWidth = gapWidth;
+        ctx.beginPath();
+        smoothPath(ctx, points);
+        ctx.stroke();
+        ctx.globalCompositeOperation = "source-over";
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      if (shadow) { ctx.shadowColor = shadow; ctx.shadowBlur = 8; }
+      ctx.beginPath();
+      smoothPath(ctx, points);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function contiguousSegments(points) {
+      const segments = []; let current = [];
+      points.forEach(point => {
+        if (!current.length || point.index - current[current.length - 1].index <= 1) {
+          current.push(point);
+        } else {
+          segments.push(current);
+          current = [point];
+        }
+      });
+      if (current.length) segments.push(current);
+      return segments;
+    }
+
+    function trendXLabel(row) {
+      if (!row) return "";
+      if (activeTrendMode === "hour") return formatHourAxisTime(row.timestamp);
+      return formatClockTime(row.timestamp);
+    }
+
+    function drawChart() {
+      const canvas = byId("trendChart");
+      const box = canvas.parentElement.getBoundingClientRect();
+      const scale = window.devicePixelRatio || 1;
+      const cssW = Math.max(320, box.width), cssH = Math.max(220, box.height);
+      canvas.width = Math.floor(cssW * scale);
+      canvas.height = Math.floor(cssH * scale);
+      canvas.style.width = cssW + "px";
+      canvas.style.height = cssH + "px";
+
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+
+      const rightSafe = Math.min(156, Math.max(24, cssW * 0.12));
+      const pad = { l: 60, r: rightSafe, t: 18, b: 52 };
+      const x0 = pad.l, y0 = cssH - pad.b, x1 = cssW - pad.r, y1 = pad.t;
+      const rows = activeTrendRows();
+      const aggregateRows = aggregateTrendRows(rows);
+      const values = aggregateRows.concat(rows).map(r => Number(r.saved_tokens || 0));
+      const maxV = Math.max(1, ...values);
+      const groups = groupTrendRows(rows);
+      const xAxisRows = activeTrendMode === "hour" ? aggregateRows : rows;
+
+      function drawFrame() {
+        ctx.clearRect(0, 0, cssW, cssH);
+        if (chartAnimProgress < 1) chartAnimProgress = Math.min(1, chartAnimProgress + 0.035);
+        const ease = 1 - Math.pow(1 - chartAnimProgress, 4);
+
+        ctx.font = "11px " + UI_FONT_FAMILY;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        for (let i = 0; i <= 4; i++) {
+          const y = y0 - (y0 - y1) * i / 4;
+          ctx.fillStyle = chartCssVar("--chart-label", "#64748b");
+          ctx.fillText(formatCompact(Math.round(maxV * i / 4)), x0 - 10, y);
+          ctx.strokeStyle = i === 0 ? chartCssVar("--chart-axis", "#cbd5e1") : chartCssVar("--chart-grid", "#f1f5f9");
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+        }
+
+        if (!rows.length) {
+          ctx.fillStyle = chartCssVar("--chart-label", "#64748b"); ctx.textAlign = "left";
+          ctx.font = "14px " + UI_FONT_FAMILY;
+          ctx.fillText("暂无对应区间的图表数据", x0 + 16, y1 + 24);
+          return;
+        }
+
+        const bucketIndex = new Map(aggregateRows.map((row, i) => [trendKey(row), i]));
+        groups.forEach(g => {
+          const rowsForGroup = g.rows || [];
+          const pts = rowsForGroup.map((row, i) => {
+            const index = activeTrendMode === "hour" ? bucketIndex.get(trendKey(row)) : row.chart_index;
+            const total = activeTrendMode === "hour" ? aggregateRows.length : rows.length;
+            return {
+              index,
+              point: [
+                xForIndex(index ?? 0, total, x0, x1),
+                yForValue(row.saved_tokens, y0, y1, maxV, ease)
+              ]
+            };
+          }).filter(item => Number.isFinite(item.index)).sort((a, b) => a.index - b.index);
+
+          if (activeTrendMode === "hour") {
+            contiguousSegments(pts).forEach(segment => {
+              drawStroke(ctx, segment.map(item => item.point), g.color.line, 2, "", { isolate: true });
+            });
+          } else {
+            drawStroke(ctx, pts.map(item => item.point), g.color.line, 2, "", { isolate: true });
+          }
+        });
+
+        ctx.fillStyle = chartCssVar("--chart-label", "#64748b");
+        ctx.font = "11px " + UI_FONT_FAMILY;
+        ctx.textBaseline = "top";
+        const first = xAxisRows[0], last = xAxisRows[xAxisRows.length - 1];
+        const labelY = Math.min(cssH - 18, y0 + 16);
+        if (first) {
+          ctx.textAlign = "left";
+          ctx.fillText(trendXLabel(first), x0, labelY);
+        }
+        if (last && xAxisRows.length > 1) {
+          ctx.textAlign = "right";
+          ctx.fillText(trendXLabel(last), x1, labelY);
+        }
+
+        if (chartAnimProgress < 1) chartAnimFrame = requestAnimationFrame(drawFrame);
+      }
+
+      if (chartAnimFrame) cancelAnimationFrame(chartAnimFrame);
+      drawFrame();
+    }
+
+    async function loadData(useCustom) {
+      if (isLoading) return;
+      setLoadingState(true);
+      setStatus("loading", "正在拉取最新数据...");
+      const params = buildParams(useCustom);
+      try {
+        const res = await adminFetch("/api/dashboard?" + params.toString(), { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        const summary = data.summary || {};
+
+        setText("rangeLabel", "选定时间范围：" + formatTime(data.range?.since, false) + " ➜ " + formatTime(data.range?.until, false));
+        setText("totalRequests", fmt.format(summary.total_requests || 0));
+        setText("compressedRequests", fmt.format(summary.compressed_requests || 0));
+        setText("originalTokens", formatTokenValue(summary.estimated_original_tokens));
+        setText("compressedTokens", formatTokenValue(summary.estimated_compressed_tokens));
+        setText("savedTokens", formatTokenValue(summary.estimated_saved_tokens));
+        setText("savedRatio", pct.format(summary.saved_ratio || 0));
+        setText("avgSaved", formatTokenValue(Math.round(summary.avg_saved_tokens || 0)));
+        setText("meteredRequests", fmt.format(summary.metered_requests || 0));
+        setText("baselineInputTokens", formatTokenValue(summary.baseline_input_tokens));
+        setText("actualInputTokens", formatTokenValue(summary.actual_input_tokens));
+        setText("cacheAlignedSavedTokens", formatTokenValue(summary.cache_aligned_saved_tokens));
+        setText("meteredRequestsNote", "覆盖 " + pct.format(summary.metered_coverage_ratio || 0));
+        setText("baselineInputNote", "较实际多出 " + formatTokenValue(summary.baseline_minus_actual_input_tokens || 0));
+        setText("actualInputNote", "输出 " + formatTokenValue(summary.actual_output_tokens || 0) + " · 缓存命中 " + formatTokenValue(summary.cached_input_tokens || 0));
+        setText("cacheAlignedSavedNote", "节省率 " + pct.format(summary.cache_aligned_saved_ratio || 0) + " · 与估算差 " + formatTokenValue(summary.estimated_vs_metered_saved_delta || 0));
+        setText("errorCount", fmt.format(summary.error_count || 0));
+
+        const recentPage = Array.isArray(data.recent) ? { rows: data.recent, total: data.recent.length } : (data.recent || {});
+        const errorPage = Array.isArray(data.errors) ? { rows: data.errors, total: data.errors.length } : (data.errors || {});
+        trafficSources = Array.isArray(data.traffic_sources) ? data.traffic_sources : [];
+        recentData = recentPage.rows || [];
+        errorData = errorPage.rows || [];
+        recentTotal = Number(recentPage.total || recentData.length || 0);
+        errorTotal = Number(errorPage.total || errorData.length || 0);
+        trendData = buildRequestTrend(data.trend_recent || recentData);
+        hourlyTrendData = buildHourlyTrend(data.trend_hourly_24h || data.trend || []);
+        updateTrendHeader();
+        chartAnimProgress = 0;
+        drawChart();
+        renderRecent();
+        renderErrors();
+        await loadProviders();
+        await loadProfiles();
+        await loadRouting();
+        setText("lastUpdated", "同步完成于：" + formatTime(new Date().toISOString()));
+        setStatus("ok", "系统健康运行中");
+      } catch (err) {
+        setStatus("error", "连接核心系统失败");
+        byId("recentRows").innerHTML = '<tr><td colspan="12" class="empty">网络或接口异常，无法读取数据流：' + escapeHtml(err.message) + '</td></tr>';
+        byId("errorRows").innerHTML = '<tr><td colspan="7" class="empty">无法读取错误栈</td></tr>';
+      } finally {
+        setLoadingState(false);
+      }
+    }
+
+    document.querySelectorAll("[data-range]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-range]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        activeRange = btn.dataset.range || "24h";
+        customRangeActive = false;
+        customSince = ""; customUntil = "";
+        recentCurrentPage = 1; errorCurrentPage = 1;
+        loadData(false);
+      });
+    });
+
+    byId("customBtn").addEventListener("click", () => {
+      customRangeActive = true;
+      customSince = byId("since").value;
+      customUntil = byId("until").value;
+      recentCurrentPage = 1; errorCurrentPage = 1;
+      loadData(true);
+    });
+
+    document.querySelectorAll("[data-view-target]").forEach(btn => {
+      btn.addEventListener("click", () => setActiveView(btn.dataset.viewTarget || "viewOverview"));
+    });
+
+    byId("themeToggle").addEventListener("click", () => {
+      const current = document.documentElement.dataset.theme || "light";
+      setTheme(current === "dark" ? "light" : "dark");
+    });
+
+    byId("floatRefresh").addEventListener("click", () => loadData(false));
+
+    document.querySelectorAll("[data-log-tab]").forEach(btn => {
+      btn.addEventListener("click", () => setActiveLogTab(btn.dataset.logTab || "recent"));
+    });
+
+    byId("logSourceFilters").addEventListener("click", event => {
+      const button = event.target.closest("[data-log-source]");
+      if (button) setActiveLogSource(button.dataset.logSource || "");
+    });
+
+    byId("providerMiniList").addEventListener("click", event => {
+      const button = event.target.closest("[data-provider-action]");
+      if (!button) return;
+      const id = button.dataset.providerId || "";
+      if (!id) return;
+      if (button.dataset.providerAction === "activate") activateProvider(id);
+      if (button.dataset.providerAction === "edit") editProvider(id);
+      if (button.dataset.providerAction === "check") checkProvider(id);
+      if (button.dataset.providerAction === "delete") deleteProvider(id);
+    });
+
+    byId("providerForm").addEventListener("submit", saveProvider);
+    byId("providerCancelEdit").addEventListener("click", resetProviderForm);
+    byId("addRoutingRule").addEventListener("click", () => addProviderRoutingRow("", activeProvider?.id || providers[0]?.id || ""));
+    byId("saveRoutingRules").addEventListener("click", saveProviderRouting);
+    byId("restartBtn").addEventListener("click", restartCtc);
+
+    byId("providerMiniRouting").addEventListener("click", event => {
+      const removeButton = event.target.closest("[data-routing-remove]");
+      if (removeButton) {
+        removeRoutingRule(removeButton.dataset.routingRemove || "");
+        return;
+      }
+      const updateButton = event.target.closest("[data-routing-update]");
+      if (updateButton) {
+        const row = updateButton.closest("[data-routing-host]");
+        if (row) updateRoutingRule(updateButton.dataset.routingUpdate || "", row);
+        return;
+      }
+      const createButton = event.target.closest("[data-routing-create]");
+      if (createButton) {
+        const row = createButton.closest("[data-routing-draft]");
+        if (row) updateRoutingRule("", row);
+        return;
+      }
+      const cancelButton = event.target.closest("[data-routing-cancel]");
+      if (cancelButton) {
+        const row = cancelButton.closest("[data-routing-draft]");
+        if (row) cancelRoutingDraft(row);
+      }
+    });
+
+    document.querySelectorAll("[data-trend-mode]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-trend-mode]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        activeTrendMode = btn.dataset.trendMode || "request";
+        updateTrendHeader();
+        chartAnimProgress = 0;
+        drawChart();
+      });
+    });
+
+    window.addEventListener("resize", () => drawChart());
+
+    setInterval(() => loadData(false), 60000);
+
+    const storedTheme = localStorage.getItem("ctc-theme");
+    if (storedTheme) {
+      document.documentElement.dataset.theme = storedTheme;
+      byId("themeToggle").textContent = storedTheme === "dark" ? "日间" : "暗夜";
+    }
+
+    loadData(false);
+</script>
+</body>
+</html>

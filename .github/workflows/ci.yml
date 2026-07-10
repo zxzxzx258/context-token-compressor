@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[test,lint,security,release]"
+      - run: python -m compileall ctc tests scripts
+      - run: bash -n scripts/install_linux.sh
+      - run: python -m pytest tests -q
+      - run: python -m ruff check ctc tests scripts
+      - run: python -m bandit -c pyproject.toml -r ctc scripts
+      - run: python -m pip_audit .
+      - run: python -m build
+      - run: python -m twine check dist/*
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3

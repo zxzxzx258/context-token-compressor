@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Context Token Compressor 审核面板</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface-soft: #eef2f7;
+      --border: #d7deea;
+      --text: #18202f;
+      --muted: #687386;
+      --blue: #2563eb;
+      --green: #0f9f6e;
+      --orange: #d97706;
+      --red: #dc2626;
+      --shadow: 0 10px 28px rgba(20, 32, 54, .08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    button, input, select {
+      font: inherit;
+    }
+    button {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      min-height: 34px;
+      padding: 7px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: #fff;
+    }
+    button.danger {
+      border-color: #fecaca;
+      color: var(--red);
+    }
+    button.ghost {
+      background: var(--surface-soft);
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .58;
+    }
+    input, select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      min-height: 36px;
+      padding: 7px 10px;
+    }
+    label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: 232px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    .nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 18px 14px;
+      background: #111827;
+      color: #f8fafc;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 18px;
+      margin: 4px 8px 18px;
+    }
+    .nav button {
+      width: 100%;
+      justify-content: flex-start;
+      display: flex;
+      border: 0;
+      background: transparent;
+      color: #cbd5e1;
+      margin: 3px 0;
+      text-align: left;
+    }
+    .nav button.active {
+      background: #1f2937;
+      color: #fff;
+    }
+    .main {
+      min-width: 0;
+      padding: 22px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+    .subtle {
+      color: var(--muted);
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .status.ok { color: var(--green); }
+    .status.error { color: var(--red); }
+    .view { display: none; }
+    .view.active { display: block; }
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+    .metric {
+      min-height: 96px;
+    }
+    .metric .label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .metric .value {
+      margin-top: 8px;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .metric .note {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .section {
+      margin-top: 14px;
+    }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 780px;
+    }
+    th, td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      background: #f8fafc;
+    }
+    tr:last-child td { border-bottom: 0; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .badge.ok { background: #dcfce7; color: #166534; }
+    .badge.warn { background: #fef3c7; color: #92400e; }
+    .badge.err { background: #fee2e2; color: #991b1b; }
+    .badge.info { background: #dbeafe; color: #1d4ed8; }
+    .row-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .form-grid .full { grid-column: 1 / -1; }
+    .route-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .route-row:last-child { border-bottom: 0; }
+    .inline-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      margin: 0;
+    }
+    .inline-check input {
+      width: auto;
+      min-height: 0;
+    }
+    .empty {
+      color: var(--muted);
+      padding: 18px;
+      text-align: center;
+    }
+    .danger-zone {
+      border-color: #fecaca;
+      background: #fff7f7;
+    }
+    .compact {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .mono {
+      font-family: Consolas, "Cascadia Mono", monospace;
+    }
+    @media (max-width: 1060px) {
+      .shell { grid-template-columns: 1fr; }
+      .nav {
+        position: static;
+        height: auto;
+      }
+      .nav button {
+        width: auto;
+        display: inline-flex;
+      }
+      .grid.cols-4, .grid.cols-3, .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .main { padding: 14px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .grid.cols-4, .grid.cols-3, .grid.cols-2, .form-grid { grid-template-columns: 1fr; }
+      .route-row { grid-template-columns: 1fr; }
+      table { min-width: 680px; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="nav" aria-label="审核面板导航">
+    <div class="brand">CTC 审核面板</div>
+    <button class="active" type="button" data-view="overview">运行概览</button>
+    <button type="button" data-view="traffic">流量与错误</button>
+    <button type="button" data-view="profiles">来源 Profile</button>
+    <button type="button" data-view="providers">Provider 与路由</button>
+    <button type="button" data-view="admin">管理动作</button>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>Context Token Compressor 人工审核版</h1>
+        <div class="subtle">Dashboard 管理面板 · test.html</div>
+      </div>
+      <div class="toolbar">
+        <select id="rangeSelect" style="width: 120px;">
+          <option value="1h">1 小时</option>
+          <option value="24h" selected>24 小时</option>
+          <option value="7d">7 天</option>
+          <option value="30d">30 天</option>
+        </select>
+        <button class="primary" id="refreshBtn" type="button">刷新</button>
+        <span id="status" class="status">等待加载</span>
+      </div>
+    </div>
+
+    <section id="overview" class="view active">
+      <div class="grid cols-4">
+        <article class="card metric"><div class="label">总请求数</div><div id="mTotal" class="value">0</div><div class="note">进入 CTC 的模型请求</div></article>
+        <article class="card metric"><div class="label">压缩请求数</div><div id="mCompressedRequests" class="value">0</div><div class="note">含被压缩工具输出</div></article>
+        <article class="card metric"><div class="label">估算原始 Token</div><div id="mOriginalTokens" class="value">0</div><div class="note">压缩前输入规模</div></article>
+        <article class="card metric"><div class="label">估算压缩后 Token</div><div id="mCompressedTokens" class="value">0</div><div class="note">转发给上游的规模</div></article>
+        <article class="card metric"><div class="label">累计节省 Token</div><div id="mSaved" class="value">0</div><div class="note">规则压缩估算节省</div></article>
+        <article class="card metric"><div class="label">节省比例</div><div id="mRatio" class="value">0%</div><div class="note">节省 / 原始 Token</div></article>
+        <article class="card metric"><div class="label">平均每请求节省</div><div id="mAvgSaved" class="value">0</div><div class="note">仅统计有节省的请求</div></article>
+        <article class="card metric"><div class="label">错误请求</div><div id="mErrors" class="value">0</div><div class="note">4xx/5xx 或代理错误</div></article>
+      </div>
+      <div class="grid cols-3 section">
+        <article class="card"><h2>当前 Provider</h2><div id="activeProviderBox" class="subtle">加载中</div></article>
+        <article class="card"><h2>Provider Routing</h2><div id="routingStateBox" class="subtle">加载中</div></article>
+        <article class="card"><h2>压缩 Profile</h2><div id="profileStateBox" class="subtle">加载中</div></article>
+      </div>
+      <div class="card section">
+        <h2>来源分布</h2>
+        <div class="table-wrap"><table><thead><tr><th>来源 IP</th><th>来源标签</th><th>请求</th><th>错误</th></tr></thead><tbody id="sourceRows"><tr><td colspan="4" class="empty">加载中</td></tr></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="traffic" class="view">
+      <article class="card">
+        <h2>请求日志</h2>
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>来源</th><th>模型</th><th>路径</th><th>状态</th><th>压缩</th><th>可压缩原 Token</th><th>压缩后</th><th>节省</th><th>Provider</th></tr></thead><tbody id="recentRows"><tr><td colspan="10" class="empty">加载中</td></tr></tbody></table></div>
+      </article>
+      <article class="card section">
+        <h2>错误日志</h2>
+        <div class="table-wrap"><table><thead><tr><th>时间</th><th>来源</th><th>模型</th><th>状态</th><th>路径</th><th>错误</th></tr></thead><tbody id="errorRows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="profiles" class="view">
+      <div class="card">
+        <h2>来源 Profile 规则</h2>
+        <div class="table-wrap"><table><thead><tr><th>来源 IP</th><th>标签</th><th>当前 Profile</th><th>配置 Profile</th><th>请求数</th><th>操作</th></tr></thead><tbody id="profileRows"><tr><td colspan="6" class="empty">加载中</td></tr></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="providers" class="view">
+      <div class="grid cols-2">
+        <article class="card">
+          <h2>Provider 列表</h2>
+          <div class="table-wrap"><table><thead><tr><th>名称</th><th>类型</th><th>模型</th><th>状态</th><th>操作</th></tr></thead><tbody id="providerRows"><tr><td colspan="5" class="empty">加载中</td></tr></tbody></table></div>
+        </article>
+        <article class="card">
+          <h2 id="providerFormTitle">新增 Provider</h2>
+          <form id="providerForm" class="form-grid" autocomplete="off">
+            <input id="providerEditId" type="hidden">
+            <div><label for="providerName">名称</label><input id="providerName" required></div>
+            <div><label for="providerType">类型</label><select id="providerType"><option value="openai_responses">OpenAI Responses 兼容</option><option value="deepseek_chat_bridge">DeepSeek Chat 桥接</option></select></div>
+            <div class="full"><label for="providerBaseUrl">Base URL</label><input id="providerBaseUrl" type="url" required></div>
+            <div><label for="providerModel">模型</label><input id="providerModel"></div>
+            <div><label for="providerUserAgent">转发 User-Agent</label><input id="providerUserAgent"></div>
+            <div class="full"><label for="providerApiKey">API Key</label><input id="providerApiKey" type="password" placeholder="编辑时留空表示不变"></div>
+            <label class="inline-check full"><input id="providerActivate" type="checkbox"> 保存后设为默认活动 Provider</label>
+            <div class="toolbar full"><button class="primary" type="submit">保存 Provider</button><button id="providerReset" type="button" class="ghost">清空表单</button></div>
+          </form>
+        </article>
+      </div>
+      <article class="card section">
+        <div class="toolbar" style="justify-content: space-between;">
+          <h2 style="margin: 0;">Provider Routing</h2>
+          <label class="inline-check"><input id="routingEnabled" type="checkbox"> 启用来源路由</label>
+        </div>
+        <div id="routingRows" style="margin-top: 10px;"></div>
+        <div class="toolbar" style="margin-top: 12px;">
+          <button id="addRouteBtn" type="button">新增路由规则</button>
+          <button id="saveRoutesBtn" class="primary" type="button">保存全部路由</button>
+        </div>
+      </article>
+    </section>
+
+    <section id="admin" class="view">
+      <div class="grid cols-2">
+        <article class="card"><h2>接口覆盖</h2><div id="coverageBox" class="compact"></div></article>
+        <article class="card danger-zone"><h2>服务管理</h2><p class="subtle">重启会中断正在进行的代理请求。</p><button id="restartBtn" class="danger" type="button">重启 CTC</button></article>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  const fmt = new Intl.NumberFormat("zh-CN");
+  const pct = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 1 });
+  const dtf = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  let dashboard = {};
+  let providers = [];
+  let activeProvider = null;
+  let routing = { enabled: false, rules: {} };
+  let profiles = ["safe", "dev", "off"];
+  let profileSources = [];
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+  const compact = (value) => fmt.format(Math.round(Number(value || 0)));
+  function shortNumber(value) {
+    const number = Number(value || 0);
+    const abs = Math.abs(number);
+    const units = [
+      [1_000_000_000, "B"],
+      [1_000_000, "M"],
+      [1_000, "K"]
+    ];
+    for (const [scale, suffix] of units) {
+      if (abs >= scale) {
+        const scaled = number / scale;
+        const digits = Math.abs(scaled) >= 100 ? 0 : Math.abs(scaled) >= 10 ? 1 : 2;
+        return scaled.toLocaleString("zh-CN", { maximumFractionDigits: digits }).replace(/\.0$/, "") + suffix;
+      }
+    }
+    return compact(number);
+  }
+
+  function setStatus(kind, text) {
+    const node = $("status");
+    node.className = "status " + (kind || "");
+    node.textContent = text;
+  }
+
+  function time(value) {
+    if (!value) return "-";
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? String(value) : dtf.format(d);
+  }
+
+  function badge(text, kind) {
+    return '<span class="badge ' + (kind || "") + '">' + esc(text) + '</span>';
+  }
+
+  function providerById(id) {
+    return providers.find((item) => item.id === id);
+  }
+
+  function providerName(id) {
+    const provider = providerById(id);
+    return provider ? provider.name : (id || "-");
+  }
+
+  function providerOptions(selected) {
+    return providers.map((item) => '<option value="' + esc(item.id) + '"' + (item.id === selected ? " selected" : "") + '>' + esc(item.name) + '</option>').join("");
+  }
+
+  function showView(id) {
+    document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === id));
+    document.querySelectorAll("[data-view]").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === id));
+  }
+
+  const adminTokenKey = "ctc-admin-token";
+
+  function adminToken(forcePrompt) {
+    if (!forcePrompt) {
+      const existing = sessionStorage.getItem(adminTokenKey);
+      if (existing) return existing;
+    }
+    const value = window.prompt("CTC 管理令牌") || "";
+    if (value) sessionStorage.setItem(adminTokenKey, value);
+    return value;
+  }
+
+  async function api(path, options) {
+    const requestOptions = Object.assign({}, options || {});
+    const headers = new Headers(requestOptions.headers || {});
+    headers.set("Authorization", "Bearer " + adminToken(false));
+    requestOptions.headers = headers;
+    let res = await fetch(path, requestOptions);
+    if (res.status === 401) {
+      sessionStorage.removeItem(adminTokenKey);
+      headers.set("Authorization", "Bearer " + adminToken(true));
+      res = await fetch(path, requestOptions);
+    }
+    if (!res.ok) {
+      let detail = "HTTP " + res.status;
+      try {
+        const payload = await res.json();
+        detail = payload.detail || detail;
+      } catch (_) {}
+      throw new Error(detail);
+    }
+    return res.json();
+  }
+
+  async function loadAll() {
+    setStatus("", "加载中");
+    const range = $("rangeSelect").value;
+    const [dash, prov, prof] = await Promise.all([
+      api("/api/dashboard?range=" + encodeURIComponent(range) + "&recent_limit=20&error_limit=20&trend_recent_limit=20&trend_hourly=1"),
+      api("/api/providers"),
+      api("/api/profiles")
+    ]);
+    dashboard = dash;
+    providers = prov.providers || [];
+    activeProvider = prov.active_provider || null;
+    routing = prov.provider_routing || { enabled: false, rules: {} };
+    profiles = prof.profiles || profiles;
+    profileSources = prof.sources || [];
+    renderAll();
+    setStatus("ok", "已刷新 " + new Date().toLocaleTimeString("zh-CN", { hour12: false }));
+  }
+
+  function renderAll() {
+    renderOverview();
+    renderTraffic();
+    renderProfiles();
+    renderProviders();
+    renderRouting();
+    renderCoverage();
+  }
+
+  function renderOverview() {
+    const summary = dashboard.summary || {};
+    $("mTotal").textContent = compact(summary.total_requests);
+    $("mCompressedRequests").textContent = compact(summary.compressed_requests);
+    $("mOriginalTokens").textContent = shortNumber(summary.estimated_original_tokens);
+    $("mCompressedTokens").textContent = shortNumber(summary.estimated_compressed_tokens);
+    $("mSaved").textContent = shortNumber(summary.estimated_saved_tokens);
+    $("mRatio").textContent = pct.format(Number(summary.saved_ratio || 0));
+    $("mAvgSaved").textContent = shortNumber(summary.avg_saved_tokens);
+    $("mErrors").textContent = compact(summary.error_count);
+    $("activeProviderBox").innerHTML = activeProvider
+      ? '<b>' + esc(activeProvider.name) + '</b><div class="compact mono">' + esc(activeProvider.base_url || "") + '</div><div style="margin-top:8px;">' + badge(activeProvider.provider_type || "-", "info") + " " + badge(activeProvider.last_status || "unknown", activeProvider.last_status === "ok" ? "ok" : "warn") + '</div>'
+      : "未发现 Provider";
+    const ruleCount = Object.keys(routing.rules || {}).length;
+    $("routingStateBox").innerHTML = (routing.enabled ? badge("已启用", "ok") : badge("未启用", "warn")) + '<div class="compact" style="margin-top:8px;">规则数：' + compact(ruleCount) + "；来源：" + esc(routing.source || "-") + "</div>";
+    $("profileStateBox").innerHTML = '<div>' + profiles.map((item) => badge(item, item === "dev" ? "info" : "")).join(" ") + '</div><div class="compact" style="margin-top:8px;">检测到来源：' + compact(profileSources.length) + "</div>";
+    const rows = dashboard.traffic_sources || [];
+    $("sourceRows").innerHTML = rows.length ? rows.map((row) =>
+      "<tr><td class=\"mono\">" + esc(row.client_host || "-") + "</td><td>" + esc(row.source || "-") + "</td><td>" + compact(row.request_count) + "</td><td>" + compact(row.error_count) + "</td></tr>"
+    ).join("") : '<tr><td colspan="4" class="empty">暂无来源数据</td></tr>';
+  }
+
+  function renderTraffic() {
+    const recent = (dashboard.recent && dashboard.recent.rows) || [];
+    const errors = (dashboard.errors && dashboard.errors.rows) || [];
+    $("recentRows").innerHTML = recent.length ? recent.map((row) =>
+      "<tr><td>" + time(row.timestamp) + "</td><td class=\"mono\">" + esc(row.client_host || "-") + "</td><td>" + esc(row.model || "-") + "</td><td class=\"mono\">" + esc(row.path || "-") + "</td><td>" + badge(row.status_code || "-", Number(row.status_code) >= 400 ? "err" : "ok") + "</td><td>" + badge(row.compression_status || "-", row.compression_status === "compressed" ? "ok" : "warn") + "</td><td>" + compact(row.estimated_original_tokens) + "</td><td>" + compact(row.estimated_compressed_tokens) + "</td><td>" + compact(row.estimated_saved_tokens) + "</td><td>" + esc(row.provider_name || row.provider_id || "-") + "</td></tr>"
+    ).join("") : '<tr><td colspan="10" class="empty">暂无请求</td></tr>';
+    $("errorRows").innerHTML = errors.length ? errors.map((row) =>
+      "<tr><td>" + time(row.timestamp) + "</td><td class=\"mono\">" + esc(row.client_host || "-") + "</td><td>" + esc(row.model || "-") + "</td><td>" + badge(row.status_code || "-", "err") + "</td><td class=\"mono\">" + esc(row.path || "-") + "</td><td>" + esc(row.error || "-") + "</td></tr>"
+    ).join("") : '<tr><td colspan="6" class="empty">暂无错误</td></tr>';
+  }
+
+  function renderProfiles() {
+    $("profileRows").innerHTML = profileSources.length ? profileSources.map((row) => {
+      const selected = row.configured_profile || row.effective_profile || "off";
+      const options = profiles.map((profile) => '<option value="' + esc(profile) + '"' + (profile === selected ? " selected" : "") + '>' + esc(profile) + '</option>').join("");
+      return "<tr data-profile-host=\"" + esc(row.client_host || "") + "\"><td class=\"mono\">" + esc(row.client_host || "-") + "</td><td>" + esc(row.label || row.source || "-") + "</td><td>" + badge(row.effective_profile || "-", "info") + "</td><td><select data-profile-select>" + options + "</select></td><td>" + compact(row.request_count) + "</td><td><button type=\"button\" data-profile-save>保存</button></td></tr>";
+    }).join("") : '<tr><td colspan="6" class="empty">暂无来源；有请求进入 CTC 后会自动出现</td></tr>';
+  }
+
+  function providerStatus(provider) {
+    const status = provider.last_status || "unknown";
+    if (provider.active) return badge("默认", "ok") + " " + badge(status, status === "ok" ? "ok" : "warn");
+    return badge(status, status === "ok" ? "ok" : "warn");
+  }
+
+  function renderProviders() {
+    $("providerRows").innerHTML = providers.length ? providers.map((provider) =>
+      "<tr data-provider-id=\"" + esc(provider.id) + "\"><td><b>" + esc(provider.name) + "</b><div class=\"compact mono\">" + esc(provider.base_url || "") + "</div></td><td>" + esc(provider.provider_type || "-") + "</td><td>" + esc(provider.model || "-") + "</td><td>" + providerStatus(provider) + "</td><td><div class=\"row-actions\"><button type=\"button\" data-provider-action=\"edit\">编辑</button><button type=\"button\" data-provider-action=\"activate\">设为默认</button><button type=\"button\" data-provider-action=\"check\">检查</button><button class=\"danger\" type=\"button\" data-provider-action=\"delete\">删除</button></div></td></tr>"
+    ).join("") : '<tr><td colspan="5" class="empty">暂无 Provider</td></tr>';
+  }
+
+  function renderRouting() {
+    $("routingEnabled").checked = Boolean(routing.enabled);
+    const entries = Object.entries(routing.rules || {});
+    $("routingRows").innerHTML = entries.length ? entries.map(([host, providerId]) => routeRow(host, providerId, false)).join("") : '<div class="empty">暂无自定义路由规则</div>';
+  }
+
+  function routeRow(host, providerId, draft) {
+    return '<div class="route-row" data-route-row="' + esc(host || "") + '"' + (draft ? ' data-route-draft="1"' : "") + '>' +
+      '<div><label>来源 IP / *</label><input data-route-host value="' + esc(host || "") + '" placeholder="192.0.2.10 或 *"></div>' +
+      '<div><label>Provider</label><select data-route-provider>' + providerOptions(providerId || activeProvider?.id || providers[0]?.id || "") + '</select></div>' +
+      '<div class="row-actions"><button type="button" data-route-apply>' + (draft ? "加入列表" : "更新") + '</button><button class="danger" type="button" data-route-remove>移除</button></div>' +
+    '</div>';
+  }
+
+  function routeRowsToRules() {
+    const rules = {};
+    $("routingRows").querySelectorAll("[data-route-row]").forEach((row) => {
+      const host = row.querySelector("[data-route-host]").value.trim();
+      const providerId = row.querySelector("[data-route-provider]").value;
+      if (host && providerId) rules[host] = providerId;
+    });
+    return rules;
+  }
+
+  function renderCoverage() {
+    const items = [
+      ["运行健康", "/healthz"],
+      ["统计概览", "/api/dashboard"],
+      ["来源 Profile", "/api/profiles"],
+      ["Provider CRUD", "/api/providers"],
+      ["Provider Routing", "/api/runtime-config/provider-routing"],
+      ["Provider 检查", "/api/providers/{id}/check"],
+      ["服务重启", "/api/admin/restart"]
+    ];
+    $("coverageBox").innerHTML = items.map(([name, path]) => '<div style="margin-bottom:8px;">' + badge("已接入", "ok") + " " + esc(name) + ' <span class="mono">' + esc(path) + '</span></div>').join("");
+  }
+
+  async function saveProfile(row) {
+    const host = row.dataset.profileHost || "";
+    const profile = row.querySelector("[data-profile-select]").value;
+    await api("/api/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_host: host, profile })
+    });
+    await loadAll();
+  }
+
+  function fillProviderForm(provider) {
+    $("providerEditId").value = provider?.id || "";
+    $("providerName").value = provider?.name || "";
+    $("providerType").value = provider?.provider_type || "openai_responses";
+    $("providerBaseUrl").value = provider?.base_url || "";
+    $("providerModel").value = provider?.model || "";
+    $("providerUserAgent").value = provider?.forwarded_user_agent || "";
+    $("providerApiKey").value = "";
+    $("providerActivate").checked = Boolean(provider?.active);
+    $("providerFormTitle").textContent = provider ? "编辑 Provider" : "新增 Provider";
+  }
+
+  async function saveProvider(event) {
+    event.preventDefault();
+    const id = $("providerEditId").value;
+    const payload = {
+      name: $("providerName").value.trim(),
+      provider_type: $("providerType").value,
+      base_url: $("providerBaseUrl").value.trim(),
+      model: $("providerModel").value.trim(),
+      forwarded_user_agent: $("providerUserAgent").value.trim(),
+      activate: $("providerActivate").checked
+    };
+    const key = $("providerApiKey").value.trim();
+    if (!id || key) payload.api_key = key;
+    await api(id ? "/api/providers/" + encodeURIComponent(id) : "/api/providers", {
+      method: id ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    fillProviderForm(null);
+    await loadAll();
+  }
+
+  async function providerAction(row, action) {
+    const id = row.dataset.providerId;
+    const provider = providerById(id);
+    if (!id) return;
+    if (action === "edit") {
+      fillProviderForm(provider);
+      return;
+    }
+    if (action === "activate") {
+      await api("/api/providers/" + encodeURIComponent(id) + "/activate", { method: "POST" });
+      await loadAll();
+      return;
+    }
+    if (action === "check") {
+      setStatus("", "检查 Provider 中");
+      const payload = await api("/api/providers/" + encodeURIComponent(id) + "/check", { method: "POST" });
+      providers = payload.providers || providers;
+      activeProvider = payload.active_provider || activeProvider;
+      renderAll();
+      setStatus(payload.provider?.last_status === "ok" ? "ok" : "error", payload.provider?.last_message || "检查完成");
+      return;
+    }
+    if (action === "delete") {
+      if (!confirm("确认删除 Provider：" + (provider?.name || id) + "？")) return;
+      await api("/api/providers/" + encodeURIComponent(id), { method: "DELETE" });
+      await loadAll();
+    }
+  }
+
+  async function saveRoutes() {
+    routing.enabled = $("routingEnabled").checked;
+    routing.rules = routeRowsToRules();
+    await api("/api/runtime-config/provider-routing", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: routing.enabled, rules: routing.rules })
+    });
+    await loadAll();
+  }
+
+  async function restartCtc() {
+    if (!confirm("确认重启 CTC？当前代理请求会断开。")) return;
+    await api("/api/admin/restart", { method: "POST" });
+    setStatus("ok", "已发送重启请求");
+  }
+
+  document.querySelectorAll("[data-view]").forEach((btn) => btn.addEventListener("click", () => showView(btn.dataset.view)));
+  $("refreshBtn").addEventListener("click", () => loadAll().catch((err) => setStatus("error", err.message)));
+  $("rangeSelect").addEventListener("change", () => loadAll().catch((err) => setStatus("error", err.message)));
+  $("profileRows").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-profile-save]");
+    if (!button) return;
+    saveProfile(button.closest("[data-profile-host]")).catch((err) => setStatus("error", err.message));
+  });
+  $("providerRows").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-provider-action]");
+    if (!button) return;
+    providerAction(button.closest("[data-provider-id]"), button.dataset.providerAction).catch((err) => setStatus("error", err.message));
+  });
+  $("providerForm").addEventListener("submit", (event) => saveProvider(event).catch((err) => setStatus("error", err.message)));
+  $("providerReset").addEventListener("click", () => fillProviderForm(null));
+  $("addRouteBtn").addEventListener("click", () => {
+    if (!$("routingRows").querySelector("[data-route-row]")) $("routingRows").innerHTML = "";
+    $("routingRows").insertAdjacentHTML("afterbegin", routeRow("", activeProvider?.id || providers[0]?.id || "", true));
+  });
+  $("routingRows").addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-route-remove]");
+    const apply = event.target.closest("[data-route-apply]");
+    if (remove) {
+      remove.closest("[data-route-row]").remove();
+      if (!$("routingRows").querySelector("[data-route-row]")) renderRouting();
+    }
+    if (apply) {
+      const row = apply.closest("[data-route-row]");
+      const host = row.querySelector("[data-route-host]").value.trim();
+      const providerId = row.querySelector("[data-route-provider]").value;
+      if (!host || !providerId) {
+        setStatus("error", "路由规则需要来源和 Provider");
+        return;
+      }
+      row.dataset.routeRow = host;
+      row.removeAttribute("data-route-draft");
+      setStatus("ok", "规则已加入列表，点击保存全部路由后生效");
+    }
+  });
+  $("saveRoutesBtn").addEventListener("click", () => saveRoutes().catch((err) => setStatus("error", err.message)));
+  $("restartBtn").addEventListener("click", () => restartCtc().catch((err) => setStatus("error", err.message)));
+
+  loadAll().catch((err) => setStatus("error", err.message));
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: cd dist && sha256sum * > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: docs/RELEASE_NOTES_v1.0.0.md
+          files: |
+            dist/*
