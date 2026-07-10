@@ -21,5 +21,6 @@ providers.json
 providers.json.*
 runtime_config.json
 runtime_config.json.*
+/tmp/
 tmp_*
 *.tmp

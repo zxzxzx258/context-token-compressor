@@ -35,6 +35,36 @@ Context Token Compressor
 OpenAI-compatible / DeepSeek-compatible provider
 ```
 
+## 项目特点：按场景控制压缩风险
+
+CTC 最初面向 Hermes 等长期运行的智能 Agent 设计。对这类 Agent 来说，过度压缩的风险不只是漏掉几行日志：用户偏好、禁止事项、时间范围、人物关系和记忆检索结果中的否定、条件或优先级一旦被近义改写，后续轮次就可能形成持续性的用户画像与记忆偏差。因此，CTC 把 Agent 的长期认知稳定放在最大压缩率之前，再按场景分配不同的压缩风险预算。
+
+RTK、Caveman 与 CTC 处理的是三个相邻但不同的阶段：
+
+| 项目 | 工作阶段 | 主要优势 | CTC 未完整照搬的原因 |
+|---|---|---|---|
+| [RTK](https://github.com/rtk-ai/rtk) | 工具命令执行后 | 识别 `git`、`pytest`、`rg` 等具体命令，使用专用解析器压缩输出 | API 代理通常只能看到工具结果，未必知道原始命令；依赖命令 Hook 也无法覆盖所有内置工具与非命令输出 |
+| [Caveman](https://github.com/JuliusBrussee/caveman) | 模型生成回答时 | 通过简洁表达减少当前回复的输出 token | CTC 主要压缩下一次请求中重放的历史上下文；全面改写当前回复或长期记忆可能改变语气、条件和细节 |
+| CTC | 历史上下文再次发给模型前 | 统一处理 Responses、Chat、工具输出和较旧消息，并与认证、路由、桥接和统计协同 | 采用通用确定性规则，覆盖面更广，但不具备逐命令解析器的全部精度，也不宣称语义绝对无损 |
+
+CTC 只吸收其中风险可控、适合 API 中间层的部分：
+
+- 借鉴 RTK 的工具输出去重、头尾保留，以及错误、路径、diff、统计和命令行提取，但不要求客户端安装命令重写 Hook。
+- 借鉴 Caveman 的去填充词和简洁表达，但只在 `dev` profile 中处理较旧的长消息，并保护最近 6 条消息。
+- 对 JSON 工具输出只递归处理 `stdout`、`stderr`、`text`、`output` 等文本字段，尽量保持原有结构。
+- 通过 factsheet sidecar 额外保留路径、版本号、文件名、ID、错误码、统计和短 hash；它用于保护精确 token，不代表摘要已经语义无损。
+- 使用本地确定性规则，不额外调用摘要模型；同时不保存完整请求体、用户正文或原始工具输出，避免为了压缩引入新的模型成本和数据留存风险。
+
+### Profile 风险分级
+
+| Profile | 行为 | 推荐场景 |
+|---|---|---|
+| `safe` | 只压缩 Responses 的 `function_call_output` 或 Chat 的 `role=tool`，不压缩 user/assistant 正文 | Hermes 等长期运行 Agent，优先降低用户画像、长期记忆和行为约束发生偏移的风险 |
+| `dev` | 在 `safe` 基础上压缩较旧的 user/assistant 文本，保留最近 6 条消息 | Codex、IDE Agent 等代码代理，以及长工具链和调试会话 |
+| `off` | 完全透传 | 小说、法律文本、重要配置和其他必须逐字保留的请求 |
+
+Profile 通常按可信客户端来源分配，但不与产品类型强绑定。代码代理在精确审计等任务中也可以使用 `safe` 或 `off`。回环来源默认使用 `safe`，其他来源默认使用 `off`；管理员可通过 Dashboard 配置显式规则，默认不允许客户端用 header 覆盖 profile。
+
 ## 压缩效果
 
 以下结果来自约 26 天真实运行数据的只读回溯，公开值只保留聚合指标：
@@ -61,16 +91,6 @@ OpenAI-compatible / DeepSeek-compatible provider
 - 成本降幅基于逐请求官方定价、缓存比例和长上下文档位重建的反事实，不是账单承诺或收益保证。
 - CTC 不保存原始正文，因此现阶段没有覆盖全部历史请求的语义无损 A/B 质量结论。
 - 效果取决于工具输出长度、会话结构、profile、模型 tokenizer、缓存策略和 provider 计费方式。
-
-## 压缩 Profile
-
-| Profile | 行为 | 适用场景 |
-|---|---|---|
-| `safe` | 只压缩 Responses 的 `function_call_output` 或 Chat 的 `role=tool` | 默认保守模式 |
-| `dev` | 在 `safe` 基础上压缩较旧的 user/assistant 文本，保留最近 6 条消息 | 代码代理、长工具链和调试会话 |
-| `off` | 完全透传 | 必须逐字保留的请求 |
-
-回环来源默认使用 `safe`，其他来源默认使用 `off`。管理员可通过 Dashboard 为来源配置显式规则。默认不允许客户端用 header 覆盖 profile。
 
 ## Provider 类型
 
