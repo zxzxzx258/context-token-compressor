@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,8 +70,18 @@ class CtcStore:
         conn.execute("PRAGMA temp_store=MEMORY")
         return conn
 
+    @contextmanager
+    def _connection(self):
+        """Yield a connection that commits/rolls back and is always closed."""
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def init_db(self) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA wal_autocheckpoint=1000")
             conn.executescript(
@@ -216,7 +227,7 @@ class CtcStore:
         fallback_profile = normalize_profile(fallback, self.default_profile_for_host(client_host))
         if not client_host:
             return fallback_profile
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             row = conn.execute(
                 "SELECT profile FROM profile_rules WHERE client_host = ?",
                 (client_host,),
@@ -232,7 +243,7 @@ class CtcStore:
         if normalized not in VALID_PROFILES:
             raise ValueError(f"invalid profile: {profile}")
         now = utc_now_iso()
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             current = conn.execute(
                 "SELECT source, last_seen_at FROM profile_rules WHERE client_host = ?",
                 (client_host,),
@@ -265,7 +276,7 @@ class CtcStore:
             return
         now = utc_now_iso()
         normalized = normalize_profile(profile, self.default_profile_for_host(client_host))
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             conn.execute(
                 """
                 INSERT INTO profile_rules (client_host, profile, label, updated_at, last_seen_at, source)
@@ -278,7 +289,7 @@ class CtcStore:
             )
 
     def profile_sources(self) -> list[dict[str, Any]]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             seen_rows = conn.execute(
                 """
                 SELECT client_host,
@@ -333,7 +344,7 @@ class CtcStore:
         return sorted(by_host.values(), key=lambda item: (item["last_seen_at"], item["client_host"]), reverse=True)
 
     def traffic_sources(self, since: str, until: str) -> list[dict[str, Any]]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT
@@ -367,7 +378,7 @@ class CtcStore:
             ]
 
     def record_request(self, stat: RequestStat, items: list[CompressedItemStat]) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO request_stats (
@@ -458,7 +469,7 @@ class CtcStore:
                 )
 
     def dashboard_summary(self, since: str, until: str) -> dict[str, Any]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             summary = conn.execute(
                 """
                 SELECT
@@ -518,7 +529,7 @@ class CtcStore:
             }
 
     def dashboard_trend(self, since: str, until: str) -> list[dict[str, Any]]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT
@@ -539,7 +550,7 @@ class CtcStore:
             return [dict(row) for row in rows]
 
     def recent_requests_count(self, since: str, until: str, client_host: str | None = None) -> int:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*)
@@ -560,7 +571,7 @@ class CtcStore:
         offset: int = 0,
         client_host: str | None = None,
     ) -> list[dict[str, Any]]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT timestamp, model, path, stream, status_code, source, client_host,
@@ -632,7 +643,7 @@ class CtcStore:
         return item
 
     def latest_requests_for_trend(self, limit: int = 50) -> list[dict[str, Any]]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT timestamp, source, client_host, profile, estimated_saved_tokens, status_code
@@ -647,7 +658,7 @@ class CtcStore:
             return [dict(row) for row in reversed(rows)]
 
     def error_requests_count(self, since: str, until: str, client_host: str | None = None) -> int:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             row = conn.execute(
                 """
                 SELECT COUNT(*)
@@ -669,7 +680,7 @@ class CtcStore:
         offset: int = 0,
         client_host: str | None = None,
     ) -> list[dict[str, Any]]:
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT timestamp, model, path, stream, status_code, source, client_host,

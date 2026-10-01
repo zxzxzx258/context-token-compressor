@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "context-token-compressor"
-version = "1.0.0"
+version = "1.1.0"
 description = "Context compression, protocol bridging, and provider routing for OpenAI-compatible clients"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,7 +28,7 @@ dependencies = [
 test = ["pytest>=9.0.3,<10.0"]
 lint = ["ruff>=0.11,<1.0"]
 security = ["bandit>=1.8,<2.0", "pip-audit>=2.8,<3.0"]
-release = ["build>=1.2,<2.0", "twine>=6.1,<7.0"]
+release = ["build>=1.2,<2.0", "twine>=6.1,<8.0"]
 
 [project.scripts]
 ctc = "ctc.main:main"
