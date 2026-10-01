@@ -17,10 +17,16 @@ from .runtime_config import RuntimeConfigStore
 
 PROVIDER_TYPE_OPENAI_RESPONSES = "openai_responses"
 PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE = "deepseek_chat_bridge"
-VALID_PROVIDER_TYPES = {PROVIDER_TYPE_OPENAI_RESPONSES, PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE}
+PROVIDER_TYPE_DEEPSEEK_RESPONSES = "deepseek_responses"
+VALID_PROVIDER_TYPES = {
+    PROVIDER_TYPE_OPENAI_RESPONSES,
+    PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE,
+    PROVIDER_TYPE_DEEPSEEK_RESPONSES,
+}
 PROVIDER_TYPE_LABELS = {
     PROVIDER_TYPE_OPENAI_RESPONSES: "OpenAI Responses 兼容",
     PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE: "DeepSeek Chat 桥接",
+    PROVIDER_TYPE_DEEPSEEK_RESPONSES: "DeepSeek Responses 直通",
 }
 DEFAULT_PROVIDER_ID = "env-default"
 
@@ -89,8 +95,9 @@ class ProviderConfig:
 
     def upstream_url_for_path(self, path: str) -> str:
         normalized = path if path.startswith("/") else f"/{path}"
-        if self.provider_type == PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE:
-            # DeepSeek API uses /chat/completions, /models etc -- no /v1 prefix
+        if self.provider_type in {PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE, PROVIDER_TYPE_DEEPSEEK_RESPONSES}:
+            # DeepSeek API uses /chat/completions, /responses, /models etc --
+            # no /v1 prefix
             stripped = normalized[3:] if normalized.startswith("/v1/") else normalized
             return f"{self.base_url}{stripped}"
         if normalized.startswith("/v1/") or normalized == "/v1":
@@ -453,7 +460,7 @@ async def check_provider(provider: ProviderConfig, *, timeout_seconds: float, tr
                 test_response = await client.post(
                     provider.upstream_url_for_path("/v1/responses"),
                     headers=_merge_headers(headers, {"content-type": "application/json"}),
-                    json={"model": provider.model, "input": "CTC provider check"},
+                    json={"model": provider.model, "input": "CTC provider check", "max_output_tokens": 16},
                 )
                 if test_response.status_code < 400:
                     return "ok", f"/v1/responses HTTP {test_response.status_code}"
