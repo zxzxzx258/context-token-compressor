@@ -55,12 +55,18 @@ def _clamp_int(value: int, minimum: int, maximum: int) -> int:
 
 def _parse_range(range_name: str, since: str | None, until: str | None) -> tuple[str, str]:
     now = datetime.now(UTC)
-    end = datetime.fromisoformat(until) if until else now
+    try:
+        end = datetime.fromisoformat(until) if until else now
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="until must be an ISO-8601 timestamp") from exc
     if end.tzinfo is None:
         end = end.replace(tzinfo=UTC)
 
     if since:
-        start = datetime.fromisoformat(since)
+        try:
+            start = datetime.fromisoformat(since)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="since must be an ISO-8601 timestamp") from exc
         if start.tzinfo is None:
             start = start.replace(tzinfo=UTC)
     else:
@@ -71,6 +77,8 @@ def _parse_range(range_name: str, since: str | None, until: str | None) -> tuple
             "30d": timedelta(days=30),
         }.get(range_name, timedelta(hours=24))
         start = end - delta
+    if start > end:
+        raise HTTPException(status_code=400, detail="since must not be after until")
     return start.isoformat(), end.isoformat()
 
 
@@ -121,20 +129,30 @@ def create_dashboard_router(
         error_offset: int = 0,
         recent_source: str = "",
         error_source: str = "",
+        trend_hourly: bool = False,
+        trend_recent_limit: int = 50,
     ):
         start, end = _parse_range(range, since, until)
-        hourly_start, hourly_end = _parse_range("24h", None, None)
+        # The frontend drives the trend mode: hourly mode follows the selected
+        # range, request mode picks how many recent rows to include.
+        hourly_start, hourly_end = (start, end) if trend_hourly else _parse_range("24h", None, None)
         recent_limit = _clamp_int(recent_limit, 1, MAX_PAGE_SIZE)
         error_limit = _clamp_int(error_limit, 1, MAX_PAGE_SIZE)
         recent_offset = max(0, recent_offset)
         error_offset = max(0, error_offset)
         recent_source = recent_source.strip()
         error_source = error_source.strip()
+        # trend_recent_limit <= 0 means the frontend does not need the
+        # request-mode trend (hourly mode is active).
+        if trend_recent_limit <= 0:
+            trend_recent = []
+        else:
+            trend_recent = store.latest_requests_for_trend(_clamp_int(trend_recent_limit, 1, MAX_PAGE_SIZE))
         return {
             "range": {"since": start, "until": end},
             "summary": store.dashboard_summary(start, end),
             "trend": store.dashboard_trend(start, end),
-            "trend_recent": store.latest_requests_for_trend(50),
+            "trend_recent": trend_recent,
             "trend_hourly_24h": store.dashboard_trend(hourly_start, hourly_end),
             "traffic_sources": store.traffic_sources(start, end),
             "recent": {

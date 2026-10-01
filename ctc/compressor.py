@@ -31,7 +31,6 @@ INLINE_CODE_RE = re.compile(r"`([^`]{1,160})`")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 WHITESPACE_RE = re.compile(r"\s+")
 
-TEXT_FIELDS = ("output", "content", "stdout", "stderr", "text")
 RECENT_CONTEXT_KEEP = 6
 DEV_TEXT_THRESHOLD_CHARS = 3000
 DEV_MAX_CACHE_ENTRIES = 4096
@@ -166,6 +165,9 @@ def _line_keep_score(line: str) -> int:
     return score
 
 
+LINE_TRUNCATED_MARKER = " …[CTC line truncated]"
+
+
 def _head_tail_key_lines(
     lines: list[str],
     *,
@@ -182,6 +184,14 @@ def _head_tail_key_lines(
     head_chars = 0
     for line in lines:
         if head_chars + len(line) + 1 > head_budget:
+            if not head:
+                # A single oversized line (minified JSON, base64, one-line
+                # logs) must still contribute a truncated prefix instead of
+                # leaving the head section empty.
+                cap = head_budget - len(LINE_TRUNCATED_MARKER) - 1
+                if cap > 0:
+                    head.append(line[:cap].rstrip() + LINE_TRUNCATED_MARKER)
+                    head_chars += cap
             break
         head.append(line)
         head_chars += len(line) + 1
@@ -190,13 +200,18 @@ def _head_tail_key_lines(
     tail_chars = 0
     for line in reversed(lines):
         if tail_chars + len(line) + 1 > tail_budget:
+            if not tail:
+                cap = tail_budget - len(LINE_TRUNCATED_MARKER) - 1
+                if cap > 0:
+                    tail.append(LINE_TRUNCATED_MARKER.lstrip() + " " + line[-cap:].lstrip())
+                    tail_chars += cap
             break
         tail.append(line)
         tail_chars += len(line) + 1
     tail.reverse()
 
     head_ids = set(range(len(head)))
-    tail_start = max(0, len(lines) - len(tail))
+    tail_start = max(0, len(lines) - len(tail)) if tail else len(lines)
     candidates: list[tuple[int, int, str]] = []
     for idx, line in enumerate(lines):
         if idx in head_ids or idx >= tail_start:
@@ -209,10 +224,17 @@ def _head_tail_key_lines(
     selected: list[tuple[int, str]] = []
     selected_chars = 0
     for _score, idx, line in candidates:
+        fitted = line
         if selected_chars + len(line) + 1 > middle_budget:
-            continue
-        selected.append((idx, line))
-        selected_chars += len(line) + 1
+            # Lines that no longer fit whole still contribute a truncated
+            # fragment so oversized key lines are not silently skipped.
+            remaining = middle_budget - selected_chars - 1
+            cap = min(remaining, max(200, middle_budget // 2))
+            if cap < 120:
+                continue
+            fitted = line[:cap].rstrip() + LINE_TRUNCATED_MARKER
+        selected.append((idx, fitted))
+        selected_chars += len(fitted) + 1
         if selected_chars >= middle_budget:
             break
     selected.sort(key=lambda item: item[0])
@@ -262,7 +284,7 @@ def compress_dev_tool_output(
     if len(cleaned) <= max(1200, target_chars // 2):
         return cleaned
 
-    output_hash = stable_hash(cleaned)
+    output_hash = stable_hash(f"{model}|{target_chars}|{cleaned}")
     if cache is not None:
         cached = cache.get(output_hash)
         if cached is not None:
@@ -301,6 +323,10 @@ def compress_dev_tool_output(
     )
     if len(compressed) > dev_target:
         compressed = compressed[: max(0, dev_target - 120)] + "\n[CTC dev summary truncated]\n"
+    if len(compressed) >= len(cleaned):
+        # Small target_chars can make the summary+factsheet envelope larger
+        # than the original; never inflate.
+        return cleaned
     if cache is not None:
         cache.set(output_hash, compressed)
     return compressed
@@ -400,6 +426,8 @@ def compress_dev_message_text(text: str, *, role: str, model: str | None, target
     )
     if len(compressed) > target_chars:
         compressed = compressed[: max(0, target_chars - 120)] + "\n[CTC dev message summary truncated]\n"
+    if len(compressed) >= len(cleaned):
+        return cleaned
     return compressed
 
 
@@ -428,7 +456,10 @@ def _compress_json_text_fields(
         updated: dict[str, Any] = {}
         for key, item in value.items():
             item_path = f"{path}.{key}"
-            if key in TEXT_FIELDS and isinstance(item, str) and len(item) > threshold_chars:
+            # Compress any sufficiently long string value in place so JSON
+            # envelopes survive regardless of the field name (log, result,
+            # code, ...), not just the classic stdout/stderr/text keys.
+            if isinstance(item, str) and len(item) > threshold_chars:
                 if profile == PROFILE_DEV:
                     compressed = compress_dev_tool_output(item, model=model, target_chars=target_chars, cache=cache)
                 else:
@@ -578,6 +609,14 @@ def _compress_content_text_parts(
     return updated, replacements
 
 
+def _duplicate_reference(first_index: int, output_hash: str, original_chars: int) -> str:
+    return (
+        f"CTC repeated tool output: identical to earlier item {first_index} "
+        f"(hash={output_hash[:12]}, original_chars={original_chars}). "
+        "Content omitted as an exact duplicate of a payload still present in this request."
+    )
+
+
 def compress_responses_body(
     body: dict[str, Any],
     *,
@@ -597,13 +636,30 @@ def compress_responses_body(
     updated_input: list[Any] = []
     result = CompressionResult(body=updated_body)
     has_vision_input = any(isinstance(item, dict) and _is_vision_message(item) for item in input_items)
+    seen_tool_output_hashes: dict[str, int] = {}
+    # The trailing user message carries the current task; nothing at or after
+    # it may be Caveman-compressed, with or without vision input.
+    last_user_index = next(
+        (
+            index
+            for index in range(len(input_items) - 1, -1, -1)
+            if isinstance(input_items[index], dict) and input_items[index].get("role") == "user"
+        ),
+        -1,
+    )
 
     for idx, item in enumerate(input_items):
         if not isinstance(item, dict) or item.get("type") != "function_call_output":
             if profile == PROFILE_DEV and isinstance(item, dict):
                 role = item.get("role") if isinstance(item.get("role"), str) else "message"
                 should_compress = _should_dev_compress_message(item, idx, len(input_items))
-                if not should_compress and has_vision_input and role in {"user", "assistant"} and not _is_vision_message(item):
+                if (
+                    not should_compress
+                    and has_vision_input
+                    and role in {"user", "assistant"}
+                    and not _is_vision_message(item)
+                    and idx < last_user_index
+                ):
                     original_text = _extract_content_text(item.get("content"))
                     should_compress = bool(original_text and len(original_text) > DEV_TEXT_THRESHOLD_CHARS)
                 if should_compress:
@@ -642,6 +698,41 @@ def compress_responses_body(
             continue
 
         original_output = item.get("output")
+        output_hash: str | None = None
+        duplicate_of: int | None = None
+        if isinstance(original_output, str) and len(original_output) > threshold_chars:
+            output_hash = stable_hash(sanitize_text(original_output))
+            duplicate_of = seen_tool_output_hashes.get(output_hash)
+            if duplicate_of is None:
+                seen_tool_output_hashes[output_hash] = idx
+        if duplicate_of is not None and output_hash is not None:
+            # Same payload repeated later in the same request (e.g. a file
+            # re-read): keep the first copy, replace repeats with a reference.
+            reference = _duplicate_reference(duplicate_of, output_hash, len(original_output))
+            updated_item = dict(item)
+            updated_item["output"] = reference
+            updated_input.append(updated_item)
+            tool_name = item.get("name") if isinstance(item.get("name"), str) else None
+            original_tokens = estimate_tokens(original_output, model)
+            compressed_tokens = estimate_tokens(reference, model)
+            result.compressed_items.append(
+                CompressedItemStat(
+                    item_index=idx,
+                    field_path="$.output",
+                    tool_name=tool_name,
+                    original_chars=len(original_output),
+                    compressed_chars=len(reference),
+                    original_tokens=original_tokens,
+                    compressed_tokens=compressed_tokens,
+                    saved_tokens=max(0, original_tokens - compressed_tokens),
+                    output_hash=output_hash,
+                )
+            )
+            result.original_chars += len(original_output)
+            result.compressed_chars += len(reference)
+            result.estimated_original_tokens += original_tokens
+            result.estimated_compressed_tokens += compressed_tokens
+            continue
         updated_output, replacements = _compress_output_value(
             original_output,
             model=model,
@@ -693,10 +784,15 @@ def compress_chat_body(
 ) -> CompressionResult:
     """Compress Chat Completions format body (``messages[]``).
 
-    ``safe``: compress only ``role="tool"`` message content with ``compress_text()``.
-    ``dev``:          compress tool messages with ``compress_dev_tool_output()``,
-                     compress long user/assistant messages with ``compress_dev_message_text()``,
-                     skipping the most recent ``RECENT_CONTEXT_KEEP`` messages.
+    ``safe``: compress only ``role="tool"`` message content, using the same
+    JSON-aware path as the Responses endpoint so structured tool payloads
+    keep their envelope.
+    ``dev``:          compress tool messages through the JSON-aware dev path,
+                     compress long user/assistant messages with
+                     ``compress_dev_message_text()``, skipping the most recent
+                     ``RECENT_CONTEXT_KEEP`` messages. Text parts of structured
+                     (multimodal) messages are compressed in place; image and
+                     file parts are never touched.
     ``off``:          no compression.
     """
     if profile == PROFILE_OFF:
@@ -709,6 +805,34 @@ def compress_chat_body(
     updated_messages: list[dict[str, Any]] = []
     result = CompressionResult(body=dict(body))
     total = len(messages)
+    seen_tool_output_hashes: dict[str, int] = {}
+
+    def record_stat(
+        idx: int,
+        tool_name: str | None,
+        original_text: str,
+        compressed_text: str,
+        field_path: str,
+    ) -> None:
+        original_tokens = estimate_tokens(original_text, model)
+        compressed_tokens = estimate_tokens(compressed_text, model)
+        result.compressed_items.append(
+            CompressedItemStat(
+                item_index=idx,
+                field_path=field_path,
+                tool_name=tool_name,
+                original_chars=len(original_text),
+                compressed_chars=len(compressed_text),
+                original_tokens=original_tokens,
+                compressed_tokens=compressed_tokens,
+                saved_tokens=max(0, original_tokens - compressed_tokens),
+                output_hash=stable_hash(original_text),
+            )
+        )
+        result.original_chars += len(original_text)
+        result.compressed_chars += len(compressed_text)
+        result.estimated_original_tokens += original_tokens
+        result.estimated_compressed_tokens += compressed_tokens
 
     for idx, msg in enumerate(messages):
         if not isinstance(msg, dict):
@@ -718,73 +842,75 @@ def compress_chat_body(
 
         role = msg.get("role", "")
         content = msg.get("content")
-        if not isinstance(content, str) or len(content) <= threshold_chars:
-            updated_messages.append(dict(msg))
-            result.passthrough_items_count += 1
-            continue
 
         if role == "tool":
-            # Tool output compression — two strategies
-            if profile == PROFILE_DEV:
-                compressed = compress_dev_tool_output(content, model=model, target_chars=target_chars, cache=cache)
-            else:
-                compressed = compress_text(content, model=model, target_chars=target_chars)
-            if compressed != content:
+            output_hash: str | None = None
+            duplicate_of: int | None = None
+            if isinstance(content, str) and len(content) > threshold_chars:
+                output_hash = stable_hash(sanitize_text(content))
+                duplicate_of = seen_tool_output_hashes.get(output_hash)
+                if duplicate_of is None:
+                    seen_tool_output_hashes[output_hash] = idx
+            if duplicate_of is not None and output_hash is not None:
+                # Same payload repeated later in the same conversation turn.
+                reference = _duplicate_reference(duplicate_of, output_hash, len(content))
                 updated = dict(msg)
-                updated["content"] = compressed
+                updated["content"] = reference
                 updated_messages.append(updated)
-                orig_tok = estimate_tokens(content, model)
-                comp_tok = estimate_tokens(compressed, model)
-                result.compressed_items.append(CompressedItemStat(
-                    item_index=idx,
-                    field_path=f"messages[{idx}].content",
-                    tool_name="tool",
-                    original_chars=len(content),
-                    compressed_chars=len(compressed),
-                    original_tokens=orig_tok,
-                    compressed_tokens=comp_tok,
-                    saved_tokens=max(0, orig_tok - comp_tok),
-                    output_hash=stable_hash(content),
-                ))
-                result.original_chars += len(content)
-                result.compressed_chars += len(compressed)
-                result.estimated_original_tokens += orig_tok
-                result.estimated_compressed_tokens += comp_tok
+                record_stat(idx, "tool", content, reference, f"messages[{idx}].content")
             else:
-                updated_messages.append(dict(msg))
-                result.passthrough_items_count += 1
+                # Tool output compression — JSON-aware strategy shared with the
+                # Responses endpoint: JSON envelopes survive, only long string
+                # values inside them are compressed.
+                updated_content, replacements = _compress_output_value(
+                    content,
+                    model=model,
+                    threshold_chars=threshold_chars,
+                    target_chars=target_chars,
+                    profile=profile,
+                    cache=cache,
+                )
+                if replacements:
+                    updated = dict(msg)
+                    updated["content"] = updated_content
+                    updated_messages.append(updated)
+                    for _field_path, original_text, compressed_text in replacements:
+                        record_stat(idx, "tool", original_text, compressed_text, f"messages[{idx}].content")
+                else:
+                    updated_messages.append(dict(msg))
+                    result.passthrough_items_count += 1
 
         elif profile == PROFILE_DEV and role in ("user", "assistant"):
-            # Dev mode also compresses long user/assistant text (Caveman style),
-            # but protects the most recent RECENT_CONTEXT_KEEP messages.
+            # Dev mode also compresses long user/assistant text (Caveman
+            # style), but protects the most recent RECENT_CONTEXT_KEEP
+            # messages. Structured (multimodal) content has its text parts
+            # compressed in place; image/file parts pass through untouched.
             if idx >= max(0, total - RECENT_CONTEXT_KEEP):
                 updated_messages.append(dict(msg))
                 result.passthrough_items_count += 1
                 continue
-            compressed = compress_dev_message_text(
-                content, role=role, model=model, target_chars=target_chars,
+            if isinstance(content, str) and len(content) <= DEV_TEXT_THRESHOLD_CHARS:
+                updated_messages.append(dict(msg))
+                result.passthrough_items_count += 1
+                continue
+            updated_content, replacements = _compress_content_text_parts(
+                content,
+                role=role,
+                model=model,
+                target_chars=max(1800, target_chars // 2),
             )
-            if compressed != content:
+            if replacements:
                 updated = dict(msg)
-                updated["content"] = compressed
+                updated["content"] = updated_content
                 updated_messages.append(updated)
-                orig_tok = estimate_tokens(content, model)
-                comp_tok = estimate_tokens(compressed, model)
-                result.compressed_items.append(CompressedItemStat(
-                    item_index=idx,
-                    field_path=f"messages[{idx}].content",
-                    tool_name=role,
-                    original_chars=len(content),
-                    compressed_chars=len(compressed),
-                    original_tokens=orig_tok,
-                    compressed_tokens=comp_tok,
-                    saved_tokens=max(0, orig_tok - comp_tok),
-                    output_hash=stable_hash(content),
-                ))
-                result.original_chars += len(content)
-                result.compressed_chars += len(compressed)
-                result.estimated_original_tokens += orig_tok
-                result.estimated_compressed_tokens += comp_tok
+                for field_path, original_text, compressed_text in replacements:
+                    record_stat(
+                        idx,
+                        role,
+                        original_text,
+                        compressed_text,
+                        f"messages[{idx}]{field_path.removeprefix('$')}",
+                    )
             else:
                 updated_messages.append(dict(msg))
                 result.passthrough_items_count += 1

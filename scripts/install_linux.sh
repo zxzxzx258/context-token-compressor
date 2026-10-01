@@ -31,16 +31,25 @@ generate_token() {
   fi
 }
 
+systemd_quote() {
+  # systemd EnvironmentFile entries are parsed with systemd's own quoting
+  # rules; bash %q escapes would be read back as literal backslashes.
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  printf '"%s"' "$value"
+}
+
 write_env_file() {
   install -o root -g "$SERVICE_GROUP" -m 0640 /dev/null "$ENV_FILE"
   {
-    printf 'CTC_UPSTREAM_BASE_URL=%q\n' "$CTC_UPSTREAM_BASE_URL"
-    printf 'CTC_UPSTREAM_API_KEY=%q\n' "${CTC_UPSTREAM_API_KEY:-}"
-    printf 'CTC_ADMIN_TOKEN=%q\n' "$CTC_ADMIN_TOKEN"
+    printf 'CTC_UPSTREAM_BASE_URL=%s\n' "$(systemd_quote "$CTC_UPSTREAM_BASE_URL")"
+    printf 'CTC_UPSTREAM_API_KEY=%s\n' "$(systemd_quote "${CTC_UPSTREAM_API_KEY:-}")"
+    printf 'CTC_ADMIN_TOKEN=%s\n' "$(systemd_quote "$CTC_ADMIN_TOKEN")"
     if [[ -n "${CTC_LAN_PROXY_HOST:-}" && -n "${CTC_LAN_PROXY_PORT:-}" ]]; then
-      printf 'CTC_LAN_PROXY_HOST=%q\n' "$CTC_LAN_PROXY_HOST"
-      printf 'CTC_LAN_PROXY_PORT=%q\n' "$CTC_LAN_PROXY_PORT"
-      printf 'CTC_PROXY_TOKEN=%q\n' "$CTC_PROXY_TOKEN"
+      printf 'CTC_LAN_PROXY_HOST=%s\n' "$(systemd_quote "$CTC_LAN_PROXY_HOST")"
+      printf 'CTC_LAN_PROXY_PORT=%s\n' "$(systemd_quote "$CTC_LAN_PROXY_PORT")"
+      printf 'CTC_PROXY_TOKEN=%s\n' "$(systemd_quote "$CTC_PROXY_TOKEN")"
     fi
   } >"$ENV_FILE"
   chown root:"$SERVICE_GROUP" "$ENV_FILE"
