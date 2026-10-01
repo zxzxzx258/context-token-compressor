@@ -224,7 +224,12 @@ def chat_message_from_response(response: dict[str, Any]) -> Message | None:
 def stream_created_event(*, model: str, response_id: str) -> bytes:
     return _sse_event(
         "response.created",
-        {"type": "response.created", "response": _stream_completed_response(model, response_id, status="in_progress")},
+        {
+            "type": "response.created",
+            "response": _stream_completed_response(model, response_id, status="in_progress"),
+            # OpenAI numbers SSE events from 0 on response.created.
+            "sequence_number": 0,
+        },
     )
 
 
@@ -261,13 +266,21 @@ def response_to_sse(response: dict[str, Any]) -> bytes:
             continue
         item_id = str(item.get("id") or item.get("call_id") or f"item_{uuid.uuid4().hex}")
         item = {**item, "id": item_id}
+        added_item = item
+        if item.get("type") == "message" and isinstance(item.get("content"), list):
+            # Per the Responses stream contract, output_item.added for a
+            # message carries empty text; content arrives via deltas.
+            added_item = {
+                **item,
+                "content": [{**part, "text": ""} if isinstance(part, dict) and part.get("type") == "output_text" else part for part in item["content"]],
+            }
         out.append(
             _sse_event(
                 "response.output_item.added",
                 {
                     "type": "response.output_item.added",
                     "output_index": item_index,
-                    "item": item,
+                    "item": added_item,
                     "sequence_number": next_sequence(),
                 },
             )
