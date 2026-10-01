@@ -1,6 +1,6 @@
 # Context Token Compressor 项目协作规则
 
-本仓库是 Context Token Compressor（CTC）的正式发行源。默认使用中文沟通，结论先行，并以真实测试输出为依据。
+本仓库是 Context Token Compressor（CTC）的正式发行源。默认使用中文沟通，结论先行，并以真实测试输出为依据。git commit 信息（subject 与 body）全部使用中文。
 
 ## 安全边界
 
