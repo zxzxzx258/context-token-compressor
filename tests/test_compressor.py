@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import json
 
-from ctc.compressor import SummaryCache, compress_responses_body, compress_text
+from ctc.compressor import (
+    SummaryCache,
+    compress_chat_body,
+    compress_dev_tool_output,
+    compress_responses_body,
+    compress_text,
+)
 
 
 def test_compress_text_keeps_errors_paths_and_header():
@@ -148,3 +154,119 @@ def test_dev_profile_compresses_old_multimodal_context_but_keeps_recent_image():
     assert recent_parts[1]["image_url"] == image_url
     assert len(result.compressed_items) == 2
     assert result.compressed_items[0].field_path == "$.content[0].text"
+
+
+def test_single_line_minified_output_keeps_content_fragments():
+    payload = json.dumps({"status": "ok", "log": "x" * 40000, "detail": "y" * 40000})
+    compressed = compress_text(payload, model="gpt-5.5", target_chars=3000)
+
+    assert len(compressed) < len(payload)
+    # The single oversized line must still contribute real content instead of
+    # collapsing to an empty shell.
+    assert "CTC line truncated" in compressed
+    head = compressed.split("[head]\n", 1)[1].split("\n\n", 1)[0]
+    assert len(head) > 400
+    assert "xxxx" in head
+
+
+def test_json_tool_output_with_unknown_keys_keeps_envelope():
+    payload = json.dumps({"status": "failed", "exit_code": 1, "log": "ERROR detail " * 3000})
+    body = {"model": "gpt-5.5", "messages": [{"role": "tool", "tool_call_id": "c1", "content": payload}]}
+
+    result = compress_chat_body(body, threshold_chars=1000, target_chars=2000, profile="safe")
+
+    content = result.body["messages"][0]["content"]
+    parsed = json.loads(content)
+    assert parsed["status"] == "failed"
+    assert parsed["exit_code"] == 1
+    assert "CTC compressed tool output" in parsed["log"]
+
+
+def test_repeated_tool_output_in_same_request_uses_reference():
+    big = "ERROR line\n" * 800
+    body = {
+        "model": "gpt-5.5",
+        "input": [
+            {"type": "function_call_output", "call_id": "c1", "output": big},
+            {"type": "function_call_output", "call_id": "c2", "output": big},
+        ],
+    }
+
+    result = compress_responses_body(body, threshold_chars=2000, target_chars=3000, profile="safe")
+
+    first = result.body["input"][0]["output"]
+    second = result.body["input"][1]["output"]
+    assert "CTC compressed tool output" in first
+    assert "identical to earlier item 0" in second
+    assert len(second) < 300
+    assert result.compressed_items[1].item_index == 1
+
+
+def test_chat_repeated_tool_output_uses_reference():
+    big = "ERROR line\n" * 800
+    body = {
+        "model": "gpt-5.5",
+        "messages": [
+            {"role": "tool", "tool_call_id": "c1", "content": big},
+            {"role": "tool", "tool_call_id": "c2", "content": big},
+        ],
+    }
+
+    result = compress_chat_body(body, threshold_chars=2000, target_chars=3000, profile="safe")
+
+    assert "identical to earlier item 0" in result.body["messages"][1]["content"]
+
+
+def test_vision_fallback_never_compresses_last_user_message():
+    old_image_url = "data:image/png;base64,AAAA"
+    latest_question = "Now write the detailed implementation plan: " + "step " * 1200
+    body = {
+        "model": "gpt-5.5",
+        "input": [
+            {"role": "user", "content": [{"type": "input_image", "image_url": old_image_url}]},
+            {"role": "assistant", "content": "Here is the image analysis. " * 300},
+            {"role": "user", "content": latest_question},
+        ],
+    }
+
+    result = compress_responses_body(body, threshold_chars=1000, target_chars=5000, profile="dev")
+
+    # The latest user message carries the current task and must survive intact.
+    assert result.body["input"][2]["content"] == latest_question
+    # Older assistant context is still compressed in vision conversations.
+    assert "CTC dev Caveman-style assistant summary" in result.body["input"][1]["content"]
+
+
+def test_chat_dev_compresses_old_multimodal_text_parts_and_keeps_images():
+    old_text = "old admission context " * 800
+    recent = "do the task now"
+    body = {
+        "model": "gpt-5.5",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": old_text},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}},
+                ],
+            },
+            *[{"role": "assistant", "content": f"note {i}"} for i in range(6)],
+            {"role": "user", "content": recent},
+        ],
+    }
+
+    result = compress_chat_body(body, threshold_chars=1000, target_chars=5000, profile="dev")
+
+    parts = result.body["messages"][0]["content"]
+    assert "CTC dev Caveman-style user summary" in parts[0]["text"]
+    assert parts[1]["image_url"]["url"] == "data:image/png;base64,AAA"
+    assert result.body["messages"][-1]["content"] == recent
+
+
+def test_dev_tool_output_never_inflates():
+    for size in range(1150, 2300, 150):
+        text = "\n".join(
+            f"unique content line {i} with some padding words to reach the size" for i in range(max(1, size // 62))
+        )
+        compressed = compress_dev_tool_output(text, model="gpt-5.5", target_chars=2000)
+        assert len(compressed) <= len(text), f"inflated at input size {len(text)}"

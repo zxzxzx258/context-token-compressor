@@ -6,14 +6,17 @@ CTC 不只用于节省 token。Codex、IDE Agent、CLI Agent 和其他使用 Ope
 
 ## 主要能力
 
-- 代理 `/v1/responses`、`/v1/chat/completions` 和其他 `/v1/*` 请求。
+- 代理 `/v1/responses`、`/v1/chat/completions` 和其他 `/v1/*` 请求，两种主协议均支持流式 SSE 透明转发。
 - 以 `safe` 模式压缩工具输出，以 `dev` 模式进一步压缩较旧的 user/assistant 文本。
 - 通过 factsheet sidecar 保留错误、路径、版本号、文件名、ID、统计和短 hash。
-- 支持 OpenAI Responses/Chat 直通，以及 Responses 到 DeepSeek Chat Completions 的协议桥接。
+- JSON 工具输出只压缩超长字符串值，保留 JSON 结构本身；单行超长输出（minified JSON、base64）也会保留首尾片段而非压空。
+- 同一请求内字节级重复的工具输出会以短引用替代（记录 sha256，不落盘原文）。
+- 支持 OpenAI Responses/Chat 直通、DeepSeek 原生 Responses 直通，以及 Responses 到 DeepSeek Chat Completions 的协议桥接。
+- 桥接器支持视觉输入转换（用户消息中的 `input_image` 转为 Chat `image_url`），并按 DeepSeek 官方映射传递 reasoning effort。
 - 按可信客户端来源选择压缩 profile 和 provider，实现模型路由中转。
-- 透明转发 SSE 流；非流式网络错误和 502/503/504 可延迟后重试一次。
+- 非流式连接阶段网络错误和 502/503 可延迟后重试一次；不重试 504 与读阶段错误，避免对已计费的补全重复扣费。
 - 提供 SQLite 统计、真实 usage 对齐和受管理员 token 保护的 Dashboard。
-- 不保存完整请求体、用户正文、原始工具输出或 Authorization。
+- 不保存完整请求体、用户正文、原始工具输出或 Authorization（磁盘零留存；DeepSeek 桥接为维护续接状态会在进程内存中缓存最近会话消息，最长 1 小时，重启即清空）。
 
 ## 数据流
 
@@ -51,9 +54,11 @@ CTC 只吸收其中风险可控、适合 API 中间层的部分：
 
 - 借鉴 RTK 的工具输出去重、头尾保留，以及错误、路径、diff、统计和命令行提取，但不要求客户端安装命令重写 Hook。
 - 借鉴 Caveman 的去填充词和简洁表达，但只在 `dev` profile 中处理较旧的长消息，并保护最近 6 条消息。
-- 对 JSON 工具输出只递归处理 `stdout`、`stderr`、`text`、`output` 等文本字段，尽量保持原有结构。
+- 借鉴 [headroom](https://github.com/headroomlabs-ai/headroom)、[kompact](https://github.com/npow/kompact) 的 JSON 结构保留思路：对 JSON 工具输出只压缩超过阈值的字符串值（不再限定字段名），保留 JSON 信封本身；单行超长输出按首/中/尾截断保留片段。
+- 借鉴 [sqz](https://github.com/ojuschugh1/sqz) 的重复输出引用法：同一请求内字节级重复的工具输出以短引用替代，通过 sha256 确认完全一致；CTC 不落盘原文，因此不做跨请求的"召回句柄"。
 - 通过 factsheet sidecar 额外保留路径、版本号、文件名、ID、错误码、统计和短 hash；它用于保护精确 token，不代表摘要已经语义无损。
 - 使用本地确定性规则，不额外调用摘要模型；同时不保存完整请求体、用户正文或原始工具输出，避免为了压缩引入新的模型成本和数据留存风险。
+- 明确不采纳：LLMLingua 类 perplexity 剪枝（有公开基准显示其破坏工具调用质量）、语义摘要模型（引入新模型依赖与延迟）、可逆压缩+原文存储（与 CTC 的零留存隐私设计冲突）。
 
 ### Profile 风险分级
 
@@ -98,8 +103,15 @@ Profile 通常按可信客户端来源分配，但不与产品类型强绑定。
 |---|---|
 | `openai_responses` | 按原协议转发到支持 Responses/Chat 的 OpenAI-compatible 上游 |
 | `deepseek_chat_bridge` | Chat 请求直接转发；Responses 请求转换为 Chat Completions，并维护 reasoning/tool-call 续接状态 |
+| `deepseek_responses` | 直通转发到 DeepSeek 原生 `/responses` 端点（无状态，保留上游流式语义；注意 DeepSeek 流不发送 `data: [DONE]` 哨兵） |
 
 provider URL 必须是绝对 `http://` 或 `https://` 地址，不允许嵌入用户名、密码或 URL fragment。provider 管理属于管理员权限，因为错误配置可能访问内网服务。
+
+### 视觉与多模态
+
+- OpenAI Responses 与 Chat 直通路径对图片内容零改动：`input_image`、`image_url`、`prompt_cache_breakpoint` 等部件原样透传，压缩器只处理文本。
+- `deepseek_chat_bridge` 会把用户消息中的 `input_image`（URL、data URL 或 file_id）转换为 DeepSeek 视觉模型（`deepseek-flash`）接受的 Chat `image_url` / `file` 部件；system/assistant/tool 消息中的图片会降级为文本占位符（DeepSeek 仅接受用户消息携带图片）。
+- 携带视觉输入的会话中，dev 模式仍会压缩较旧的纯文本上下文，但当前任务（最后一条用户消息及其之后的内容）永不压缩。
 
 ## 安全默认值
 
@@ -122,7 +134,7 @@ provider URL 必须是绝对 `http://` 或 `https://` 地址，不允许嵌入�
 交互式安装会询问上游 URL、上游 API Key 和是否启用 LAN 代理，自动生成管理员/代理 token，并将秘密配置写入权限为 `0640` 的 `/etc/ctc/ctc.env`。生成的 token 不会打印到终端。
 
 ```bash
-git clone --depth 1 --branch v1.0.0 https://github.com/zxzxzx258/context-token-compressor.git && cd context-token-compressor && sudo bash scripts/install_linux.sh
+git clone --depth 1 --branch v1.1.0 https://github.com/zxzxzx258/context-token-compressor.git && cd context-token-compressor && sudo bash scripts/install_linux.sh
 ```
 
 安装器会创建专用 `ctc` 系统用户，将只读程序快照放到 `/opt/ctc/app`，虚拟环境放到 `/opt/ctc/.venv`，状态放到 `/var/lib/ctc`，并启用强化后的 `ctc.service`。重复运行安装器可更新同一安装。

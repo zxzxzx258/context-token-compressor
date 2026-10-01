@@ -34,6 +34,10 @@ def validate_startup_settings(settings: Settings) -> None:
         raise ValueError("CTC_PROXY_TOKEN is required for a non-loopback proxy listener")
     if settings.lan_proxy_host and settings.lan_proxy_port and not settings.proxy_token:
         raise ValueError("CTC_PROXY_TOKEN is required when the LAN listener is enabled")
+    if settings.request_timeout_seconds <= 0:
+        raise ValueError("CTC_REQUEST_TIMEOUT_SECONDS must be a positive number of seconds")
+    if settings.stream_timeout_seconds <= 0:
+        raise ValueError("CTC_STREAM_TIMEOUT_SECONDS must be a positive number of seconds")
 
 
 def bearer_token(request: Request) -> str:
