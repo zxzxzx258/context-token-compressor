@@ -6,7 +6,7 @@
 
 - 将 Responses `input` 转成 Chat `messages`。
 - 将 Responses tools 转成 Chat tools，包括 `tool_choice` 对象形态（`{"type": "function", "name": ...}`）到 Chat 嵌套形态的转换。
-- 将 Chat message、tool calls 和 usage 转回 Responses JSON 或 SSE。
+- 将 Chat message、tool calls 和 usage 转回 Responses JSON 或 SSE。生成的 Responses SSE 遵循 OpenAI 流契约：事件带递增的 `sequence_number`（`response.created` 为 0），message 项的 `output_item.added` 携带空文本、正文经 `output_text.delta` 到达，并以 `data: [DONE]` 结束。
 - 在工具调用续接时缓存并恢复 `reasoning_content`。
 - 过滤 thinking 模式不支持的采样参数。
 - 续接轮中把 `instructions` 写回历史首位的 system 消息（原地替换，不追加到末尾，避免破坏 assistant tool_calls 与 tool 输出的相邻关系）。

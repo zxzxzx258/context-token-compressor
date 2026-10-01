@@ -174,10 +174,10 @@ curl -fsS http://127.0.0.1:8788/healthz
 
 ```bash
 mkdir ctc-release && cd ctc-release
-gh release download v1.0.0 -R zxzxzx258/context-token-compressor
+gh release download v1.1.0 -R zxzxzx258/context-token-compressor
 sha256sum -c SHA256SUMS.txt
 python3.11 -m venv .venv
-./.venv/bin/python -m pip install context_token_compressor-1.0.0-py3-none-any.whl
+./.venv/bin/python -m pip install context_token_compressor-1.1.0-py3-none-any.whl
 CTC_ADMIN_TOKEN="$(openssl rand -hex 32)" ./.venv/bin/ctc
 ```
 
@@ -186,10 +186,21 @@ CTC_ADMIN_TOKEN="$(openssl rand -hex 32)" ./.venv/bin/ctc
 ```bash
 git clone https://github.com/zxzxzx258/context-token-compressor.git
 cd context-token-compressor
-git checkout v1.0.0
+git checkout v1.1.0
 python3.11 -m venv .venv
 ./.venv/bin/python -m pip install .
 ```
+
+## CLI 与配置校验
+
+`ctc` 命令支持两个参数，用于在启动前验证配置而不实际监听端口：
+
+```bash
+./.venv/bin/ctc --version        # 打印版本号
+./.venv/bin/ctc --check-config   # 校验配置合法性后退出，不启动监听
+```
+
+`--check-config` 会执行与启动时相同的校验（例如非回环监听必须配置 `CTC_PROXY_TOKEN`），适合写进部署前的自动化检查。
 
 ## 启用远程代理
 
@@ -219,11 +230,14 @@ ssh -L 8788:127.0.0.1:8788 user@server
 |---|---|
 | `GET /healthz` | 最小健康状态，无需认证 |
 | `GET /api/status` | 运行状态和当前 provider，需要管理员 token |
-| `GET /api/dashboard` | 统计、趋势、最近请求与错误 |
+| `GET /api/dashboard` | 统计、趋势、最近请求与错误，支持 `range`/`since`/`until`、分页与来源过滤 |
 | `GET/POST /api/profiles` | 来源 profile 管理 |
 | `GET/POST/PATCH/DELETE /api/providers` | provider 管理 |
-| `PATCH /api/runtime-config/provider-routing` | 来源到 provider 路由 |
-| `POST /api/admin/restart` | 进程重启，默认关闭 |
+| `POST /api/providers/{id}/activate` | 切换当前激活 provider |
+| `POST /api/providers/{id}/check` | 对该 provider 发起上游连通性检查并记录结果 |
+| `GET /api/runtime-config` | 读取来源到 provider 的路由配置 |
+| `PATCH /api/runtime-config/provider-routing` | 修改来源到 provider 路由 |
+| `POST /api/admin/restart` | 进程重启，默认关闭（需 `CTC_ALLOW_SELF_RESTART=1`） |
 
 ## 主要环境变量
 
@@ -236,14 +250,21 @@ ssh -L 8788:127.0.0.1:8788 user@server
 | `CTC_LAN_PROXY_HOST` / `PORT` | 空 / `0` | 可选远程代理监听 |
 | `CTC_PROXY_TOKEN` | 空 | 非回环或 LAN 代理必填 token |
 | `CTC_DASHBOARD_HOST` / `PORT` | `127.0.0.1` / `8788` | Dashboard 监听 |
+| `CTC_LOCAL_RUNTIME_DIR` | `<仓库上级目录>/release/runtime_state` 存在时用它，否则 `/var/lib/ctc` | SQLite、provider 配置和路由配置的默认目录 |
 | `CTC_DEFAULT_PROFILE` | `safe` | 默认压缩 profile |
-| `CTC_PROFILE_RULES` | 空 | 来源到 profile 的静态规则 |
+| `CTC_PROFILE_RULES` | 空 | 来源到 profile 的静态规则，格式 `host=profile;host2=profile`，支持 `*` 通配 |
 | `CTC_TRUSTED_PROXY_HOSTS` | 空 | 允许提供 X-Forwarded-For 的直接对端 |
-| `CTC_ALLOW_PROFILE_HEADER` | `0` | 是否允许 X-CTC-Profile |
-| `CTC_MAX_BODY_BYTES` | `16777216` | 请求体上限 |
+| `CTC_ALLOW_PROFILE_HEADER` | `0` | 是否允许 `X-CTC-Profile` 覆盖 profile |
+| `CTC_MAX_BODY_BYTES` | `16777216` | 请求体上限，超限返回 413 |
+| `CTC_COMPRESS_THRESHOLD_CHARS` | `2000` | 工具输出压缩触发阈值（字符数） |
+| `CTC_COMPRESS_TARGET_CHARS` | `10000` | 压缩后目标长度（字符数），用于工具输出与 dev 模式旧消息文本的头尾保留预算 |
+| `CTC_REQUEST_TIMEOUT_SECONDS` | `240` | 上游连接/写超时（秒），非法值启动即报错 |
+| `CTC_STREAM_TIMEOUT_SECONDS` | `600` | 上游流读超时（秒） |
+| `CTC_FORWARDED_USER_AGENT` | 空 | 转发上游时使用的自定义 User-Agent |
+| `CTC_ALLOW_SELF_RESTART` | `0` | 是否允许 `POST /api/admin/restart` 进程自重启 |
 | `CTC_DB_PATH` | 运行目录下 `ctc.sqlite3` | SQLite 路径 |
-| `CTC_PROVIDER_CONFIG_PATH` | 与 DB 同目录 | provider JSON 路径 |
-| `CTC_RUNTIME_CONFIG_PATH` | 与 DB 同目录 | 路由 JSON 路径 |
+| `CTC_PROVIDER_CONFIG_PATH` | 未设 `CTC_DB_PATH` 时在运行目录，否则与 DB 同目录 | provider JSON 路径 |
+| `CTC_RUNTIME_CONFIG_PATH` | 未设 `CTC_DB_PATH` 时在运行目录，否则与 DB 同目录 | 路由 JSON 路径 |
 | `CTC_TRUST_ENV_PROXY` | `0` | httpx 是否读取系统代理环境变量 |
 
 ## 升级、回滚与隐私
@@ -259,6 +280,39 @@ CTC 存储请求时间、模型、路径、状态码、来源、provider 标识�
 欢迎提交 Issue 和 PR。Dashboard 的交互、可视化、可访问性、响应式布局和运维体验是优先贡献方向；提交前请运行 compileall、pytest、Ruff 和现有安全检查，并确保不包含 Key、provider 配置、数据库、日志或真实请求正文。
 
 本项目采用 MIT License，见 [LICENSE](LICENSE)。
+
+## 更多文档
+
+- [架构说明](docs/ARCHITECTURE.md)：组件划分、请求处理顺序、认证边界与失败策略。
+- [DeepSeek 兼容桥说明](docs/DEEPSEEK_CTC_COMPATIBILITY.md)：`deepseek_chat_bridge` 与 `deepseek_responses` 的转换规则、流式契约和已知限制。
+- [变更日志](CHANGELOG.md)与各版本发行说明（[v1.0.0](docs/RELEASE_NOTES_v1.0.0.md) / [v1.1.0](docs/RELEASE_NOTES_v1.1.0.md)）。
+
+## 本地开发与测试
+
+开发环境使用 Python 3.11/3.12：
+
+```bash
+python3.11 -m venv .venv
+./.venv/bin/python -m pip install -e '.[test,lint]'
+```
+
+提交前至少运行三项检查（与 CI 一致）：
+
+```bash
+python -m compileall ctc tests scripts
+python -m pytest tests -q
+python -m ruff check ctc tests scripts
+```
+
+`scripts/` 下的辅助脚本：
+
+| 脚本 | 用途 |
+|---|---|
+| `mock_upstream.py` | 启动本地伪上游（默认 `127.0.0.1:8799`），支持 Responses 流式事件，用于无凭据联调 |
+| `smoke_real_upstream.py` | 对运行中的 CTC 代理做隔离 smoke test：`--ctc-base`、`--model`、`--stream`、`--tool-output-test`、`--auth-required`；token 从 `CTC_SMOKE_PROXY_TOKEN` 或 `CTC_PROXY_TOKEN` 读取 |
+| `sync_to_runtime.py` | 把版本化源码同步到运行目录（默认 `/opt/ctc/app`），排除 SQLite、provider 配置等状态文件 |
+
+本地联调示例：先启动 mock 上游，再以 `CTC_UPSTREAM_BASE_URL=http://127.0.0.1:8799/v1` 启动 CTC。安全行为变更必须附带回归测试，参见 [AGENTS.md](AGENTS.md)。
 
 ## 致谢
 

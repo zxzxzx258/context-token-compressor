@@ -1,5 +1,13 @@
 # 变更日志
 
+## 未发布
+
+### 修复
+
+- DeepSeek 桥接生成的 Responses SSE 遵循 OpenAI 流契约：`response.created` 携带 `sequence_number: 0`，message 项的 `output_item.added` 携带空文本（正文经 `output_text.delta` 到达）。
+- Provider 修改操作在整个 load-modify-save 期间持有存储锁，两个并发 Dashboard 写入不再丢失更新。
+- Dashboard 的 estimated-original-tokens 卡片说明改为准确描述该指标的统计口径（仅覆盖被压缩的片段子集，而非整个请求）。
+
 ## 1.1.0 - 2026-10-01
 
 ### 修复
