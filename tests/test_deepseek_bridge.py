@@ -484,3 +484,21 @@ def test_thinking_with_tools_backfills_reasoning_content_for_plain_assistant_tur
     assistants = [m for m in converted.body["messages"] if m.get("role") == "assistant"]
     assert assistants
     assert all("reasoning_content" in m for m in assistants)
+
+
+def test_sse_stream_follows_sequence_and_added_contract():
+    chat = {
+        "id": "chatcmpl_2",
+        "model": "deepseek-v4-flash",
+        "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+    }
+    response = chat_completions_to_response(chat, model="deepseek-v4-flash", response_id="resp_2")
+    sse = response_to_sse(response).decode()
+
+    created = next(line for line in sse.splitlines() if line.startswith("data:") and "response.created" in line)
+    assert '"sequence_number":0' in created
+    added = next(line for line in sse.splitlines() if line.startswith("data:") and "response.output_item.added" in line)
+    # output_item.added for a message must carry empty text; content arrives
+    # via response.output_text.delta.
+    assert '"text":""' in added
+    assert '"sequence_number":2' in added  # created=0, in_progress=1, added=2

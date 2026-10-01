@@ -315,13 +315,16 @@ class ProviderStore:
             last_status="unknown",
             last_message="尚未检测",
         )
-        providers = self._load()
-        if activate:
-            providers = [self._replace(item, active=False) for item in providers]
-            provider = self._replace(provider, active=True)
-        providers.append(provider)
-        self._save(providers)
-        return provider.public_dict()
+        # Hold the store lock across load-modify-save; RLock is reentrant
+        # so the nested _load/_save acquisitions keep working.
+        with self._lock:
+            providers = self._load()
+            if activate:
+                providers = [self._replace(item, active=False) for item in providers]
+                provider = self._replace(provider, active=True)
+            providers.append(provider)
+            self._save(providers)
+            return provider.public_dict()
 
     def update_provider(
         self,
@@ -335,92 +338,104 @@ class ProviderStore:
         forwarded_user_agent: str | None = None,
         activate: bool | None = None,
     ) -> dict[str, Any]:
-        providers = self._load()
-        now = _now_label()
-        updated: list[ProviderConfig] = []
-        found: ProviderConfig | None = None
-        for item in providers:
-            if item.id != provider_id:
-                updated.append(item)
-                continue
-            values: dict[str, Any] = {"updated_at": now}
-            if name is not None:
-                if not name.strip():
-                    raise ValueError("name is required")
-                values["name"] = name.strip()
-            if base_url is not None:
-                normalized_base = normalize_base_url(base_url)
-                _validate_base_url(normalized_base)
-                values["base_url"] = normalized_base
-            if api_key is not None:
-                values["api_key"] = api_key.strip()
-            if model is not None:
-                values["model"] = _normalize_model_name(model)
-            if provider_type is not None:
-                values["provider_type"] = normalize_provider_type(provider_type)
-            if forwarded_user_agent is not None:
-                values["forwarded_user_agent"] = forwarded_user_agent.strip()
-            found = self._replace(item, **values)
-            updated.append(found)
-        if found is None:
-            raise KeyError(provider_id)
-        if activate is True:
-            updated = [self._replace(item, active=item.id == provider_id) for item in updated]
-            found = next(item for item in updated if item.id == provider_id)
-        elif activate is False:
-            if found.active and len(updated) > 1:
-                for index, item in enumerate(updated):
-                    if item.id != provider_id:
-                        updated[index] = self._replace(item, active=True)
-                        break
-            updated = [self._replace(item, active=False) if item.id == provider_id else item for item in updated]
-            found = next(item for item in updated if item.id == provider_id)
-        if not any(item.active for item in updated):
-            updated[0] = self._replace(updated[0], active=True)
-        self._save(updated)
-        return found.public_dict()
+        # Hold the store lock across load-modify-save; RLock is reentrant
+        # so the nested _load/_save acquisitions keep working.
+        with self._lock:
+            providers = self._load()
+            now = _now_label()
+            updated: list[ProviderConfig] = []
+            found: ProviderConfig | None = None
+            for item in providers:
+                if item.id != provider_id:
+                    updated.append(item)
+                    continue
+                values: dict[str, Any] = {"updated_at": now}
+                if name is not None:
+                    if not name.strip():
+                        raise ValueError("name is required")
+                    values["name"] = name.strip()
+                if base_url is not None:
+                    normalized_base = normalize_base_url(base_url)
+                    _validate_base_url(normalized_base)
+                    values["base_url"] = normalized_base
+                if api_key is not None:
+                    values["api_key"] = api_key.strip()
+                if model is not None:
+                    values["model"] = _normalize_model_name(model)
+                if provider_type is not None:
+                    values["provider_type"] = normalize_provider_type(provider_type)
+                if forwarded_user_agent is not None:
+                    values["forwarded_user_agent"] = forwarded_user_agent.strip()
+                found = self._replace(item, **values)
+                updated.append(found)
+            if found is None:
+                raise KeyError(provider_id)
+            if activate is True:
+                updated = [self._replace(item, active=item.id == provider_id) for item in updated]
+                found = next(item for item in updated if item.id == provider_id)
+            elif activate is False:
+                if found.active and len(updated) > 1:
+                    for index, item in enumerate(updated):
+                        if item.id != provider_id:
+                            updated[index] = self._replace(item, active=True)
+                            break
+                updated = [self._replace(item, active=False) if item.id == provider_id else item for item in updated]
+                found = next(item for item in updated if item.id == provider_id)
+            if not any(item.active for item in updated):
+                updated[0] = self._replace(updated[0], active=True)
+            self._save(updated)
+            return found.public_dict()
 
     def delete_provider(self, provider_id: str) -> dict[str, Any]:
-        providers = self._load()
-        if len(providers) <= 1:
-            raise ValueError("cannot delete the last provider")
-        target = next((item for item in providers if item.id == provider_id), None)
-        if target is None:
-            raise KeyError(provider_id)
-        remaining = [item for item in providers if item.id != provider_id]
-        if target.active and remaining:
-            remaining[0] = self._replace(remaining[0], active=True)
-        self._save(remaining)
-        return target.public_dict()
+        # Hold the store lock across load-modify-save; RLock is reentrant
+        # so the nested _load/_save acquisitions keep working.
+        with self._lock:
+            providers = self._load()
+            if len(providers) <= 1:
+                raise ValueError("cannot delete the last provider")
+            target = next((item for item in providers if item.id == provider_id), None)
+            if target is None:
+                raise KeyError(provider_id)
+            remaining = [item for item in providers if item.id != provider_id]
+            if target.active and remaining:
+                remaining[0] = self._replace(remaining[0], active=True)
+            self._save(remaining)
+            return target.public_dict()
 
     def set_active(self, provider_id: str) -> dict[str, Any]:
-        providers = self._load()
-        if not any(item.id == provider_id for item in providers):
-            raise KeyError(provider_id)
-        updated = [self._replace(item, active=item.id == provider_id) for item in providers]
-        self._save(updated)
-        return next(item.public_dict() for item in updated if item.id == provider_id)
+        # Hold the store lock across load-modify-save; RLock is reentrant
+        # so the nested _load/_save acquisitions keep working.
+        with self._lock:
+            providers = self._load()
+            if not any(item.id == provider_id for item in providers):
+                raise KeyError(provider_id)
+            updated = [self._replace(item, active=item.id == provider_id) for item in providers]
+            self._save(updated)
+            return next(item.public_dict() for item in updated if item.id == provider_id)
 
     def mark_check_result(self, provider_id: str, status: str, message: str) -> dict[str, Any]:
-        providers = self._load()
-        updated: list[ProviderConfig] = []
-        found: ProviderConfig | None = None
-        for item in providers:
-            if item.id == provider_id:
-                found = self._replace(
-                    item,
-                    last_checked_at=_now_label(),
-                    last_status=status,
-                    last_message=message[:300],
-                    updated_at=_now_label(),
-                )
-                updated.append(found)
-            else:
-                updated.append(item)
-        if found is None:
-            raise KeyError(provider_id)
-        self._save(updated)
-        return found.public_dict()
+        # Hold the store lock across load-modify-save; RLock is reentrant
+        # so the nested _load/_save acquisitions keep working.
+        with self._lock:
+            providers = self._load()
+            updated: list[ProviderConfig] = []
+            found: ProviderConfig | None = None
+            for item in providers:
+                if item.id == provider_id:
+                    found = self._replace(
+                        item,
+                        last_checked_at=_now_label(),
+                        last_status=status,
+                        last_message=message[:300],
+                        updated_at=_now_label(),
+                    )
+                    updated.append(found)
+                else:
+                    updated.append(item)
+            if found is None:
+                raise KeyError(provider_id)
+            self._save(updated)
+            return found.public_dict()
 
 
 async def check_provider(provider: ProviderConfig, *, timeout_seconds: float, trust_env_proxy: bool) -> tuple[str, str]:
