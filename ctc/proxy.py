@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 import time
@@ -24,7 +25,12 @@ from .deepseek_bridge import (
 )
 from .metering import build_counterfactual_metering, usage_snapshot_from_body, usage_snapshot_from_sse_payload
 from .profiles import normalize_profile, resolve_rule_fallback
-from .providers import PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE, ProviderConfig, ProviderStore
+from .providers import (
+    PROVIDER_TYPE_DEEPSEEK_CHAT_BRIDGE,
+    ProviderConfig,
+    ProviderStore,
+)
+from .security import token_matches
 from .storage import CtcStore, RequestStat, utc_now_iso
 
 HOP_BY_HOP_HEADERS = {
@@ -41,9 +47,21 @@ HOP_BY_HOP_HEADERS = {
     "content-length",
 }
 
-DEEPSEEK_BRIDGE_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+# Headers that describe the CTC<->client relationship and must never leak to
+# the upstream provider: cookies scoped to CTC, client topology via proxy
+# forwarding chains, and CTC's own profile selection header.
+STRIPPED_CLIENT_HEADERS = HOP_BY_HOP_HEADERS | {
+    "authorization",
+    "cookie",
+    "x-forwarded-for",
+    "x-real-ip",
+    "forwarded",
+    "x-ctc-profile",
+}
+
+DEEPSEEK_BRIDGE_MODELS = ("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro")
 UPSTREAM_RETRY_DELAY_SECONDS = 10
-UPSTREAM_RETRY_STATUS_CODES = {502, 503, 504}
+UPSTREAM_RETRY_STATUS_CODES = {502, 503}
 LOGGER = logging.getLogger("uvicorn.error")
 
 
@@ -52,18 +70,26 @@ def _forward_headers(
     body: bytes | None = None,
     provider: ProviderConfig | None = None,
     forwarded_user_agent: str = "",
+    proxy_token: str | None = None,
 ) -> dict[str, str]:
     headers: dict[str, str] = {}
-    inbound_authorization = "" if not getattr(request.state, "ctc_proxy_auth_consumed", False) else None
+    consumed = getattr(request.state, "ctc_proxy_auth_consumed", False)
+    inbound_authorization = ""
     for key, value in request.headers.items():
         lower = key.lower()
-        if lower in HOP_BY_HOP_HEADERS:
-            continue
-        if lower == "authorization":
-            if inbound_authorization is not None:
+        if lower in STRIPPED_CLIENT_HEADERS:
+            if lower == "authorization" and not consumed:
                 inbound_authorization = value
             continue
         headers[key] = value
+    if inbound_authorization and proxy_token:
+        # A client Authorization that carries the CTC proxy token is an access
+        # credential for CTC itself, never for the upstream. Consume it even
+        # on the loopback listener where no auth middleware is installed.
+        scheme, _, value = inbound_authorization.partition(" ")
+        candidate = value.strip() if scheme.lower() == "bearer" else inbound_authorization.strip()
+        if token_matches(candidate, proxy_token):
+            inbound_authorization = ""
     # CTC is a local proxy. Ask the upstream for identity encoding so the client
     # never receives compressed bytes with proxy-adjusted headers.
     headers["accept-encoding"] = "identity"
@@ -96,7 +122,46 @@ async def _sleep_before_upstream_retry() -> None:
 
 
 def _is_retryable_upstream_exception(exc: Exception) -> bool:
-    return isinstance(exc, httpx.TransportError)
+    # Only retry failures that happen before the request reaches the upstream:
+    # connect-phase errors are guaranteed not to have been processed, while
+    # read/protocol errors after delivery can mean the completion already ran
+    # and a retry would bill it twice.
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+
+
+def _safe_usage_snapshot(upstream_response: httpx.Response, *, source_hint: str) -> Any | None:
+    """Extract a usage snapshot without exploding on non-JSON bodies.
+
+    Upstream successes can legitimately be empty (204), binary (file
+    downloads) or plain text; none of those may turn into fake 502s.
+    """
+    content_type = upstream_response.headers.get("content-type", "")
+    if "json" not in content_type.lower():
+        return None
+    try:
+        body = upstream_response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    return usage_snapshot_from_body(body, source_hint=source_hint)
+
+
+def _safe_record(**kwargs: Any) -> None:
+    """Record request stats without letting storage failures break the response."""
+    store = kwargs.pop("store", None)
+    try:
+        _record(store, **kwargs)
+    except Exception:
+        LOGGER.exception("ctc_stats_failure request_id=%s path=%s", kwargs.get("request_id"), kwargs.get("path"))
+
+
+def _normalize_proxy_path(path: str) -> str | None:
+    """Reject dot segments so `/v1/../admin` cannot escape the /v1 scoping."""
+    segments = path.split("/")
+    if any(segment in {"..", "."} for segment in segments):
+        return None
+    return f"/v1/{path}"
 
 
 def _is_retryable_upstream_response(response: httpx.Response) -> bool:
@@ -371,15 +436,19 @@ class _StreamAudit:
         self.usage_snapshot = None
         self._current_event = ""
         self._buffer = ""
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
     def feed(self, chunk: bytes) -> None:
         self.byte_count += len(chunk)
-        self._buffer += chunk.decode("utf-8", "ignore")
+        # Incremental decoding keeps multi-byte UTF-8 sequences that straddle
+        # chunk boundaries intact instead of dropping them.
+        self._buffer += self._decoder.decode(chunk)
         while "\n" in self._buffer:
             line, self._buffer = self._buffer.split("\n", 1)
             self._process_line(line.rstrip("\r"))
 
     def finish(self) -> None:
+        self._buffer += self._decoder.decode(b"", final=True)
         if self._buffer:
             self._process_line(self._buffer.rstrip("\r"))
             self._buffer = ""
@@ -474,14 +543,22 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
         upstream_url = provider.upstream_url_for_path("/v1/props")
         if request.url.query:
             upstream_url = f"{upstream_url}?{request.url.query}"
-        upstream_response = await client.get(
-            upstream_url,
-            headers=_forward_headers(
-                request,
-                provider=provider,
-                forwarded_user_agent=settings.forwarded_user_agent,
-            ),
-        )
+        try:
+            upstream_response = await client.get(
+                upstream_url,
+                headers=_forward_headers(
+                    request,
+                    provider=provider,
+                    forwarded_user_agent=settings.forwarded_user_agent,
+                    proxy_token=settings.proxy_token,
+                ),
+            )
+        except httpx.HTTPError as exc:
+            LOGGER.warning("ctc_props_probe_failed provider_id=%s error=%s", provider.id, f"{type(exc).__name__}: {exc}")
+            return JSONResponse(
+                {"error": {"message": "CTC upstream request failed", "type": "upstream_error"}},
+                status_code=502,
+            )
         return Response(
             content=upstream_response.content,
             status_code=upstream_response.status_code,
@@ -548,6 +625,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                         outbound_body,
                         provider,
                         forwarded_user_agent=settings.forwarded_user_agent,
+                        proxy_token=settings.proxy_token,
                     )
                     upstream_response = await _request_with_upstream_retry(
                         client,
@@ -560,8 +638,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                         provider=provider,
                     )
                     status_code = upstream_response.status_code
-                    _record(
-                        store,
+                    _safe_record(
+                        store=store,
                         request_id=request_id,
                         started=started,
                         model=model,
@@ -574,7 +652,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                         profile=profile,
                         provider=provider,
                         metering=build_counterfactual_metering(
-                            usage_snapshot_from_body(upstream_response.json(), source_hint="responses_json"),
+                            _safe_usage_snapshot(upstream_response, source_hint="responses_json"),
                             estimated_saved_input_tokens=result.estimated_saved_tokens,
                         ),
                     )
@@ -600,6 +678,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                     outbound_body,
                     provider,
                     forwarded_user_agent=settings.forwarded_user_agent,
+                    proxy_token=settings.proxy_token,
                 )
                 upstream_response = await _request_with_upstream_retry(
                     client,
@@ -612,8 +691,44 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                     provider=provider,
                 )
                 status_code = upstream_response.status_code
+                chat_body: dict[str, Any] | None = None
                 if upstream_response.status_code < 400:
-                    chat_body = upstream_response.json()
+                    # The bridge can only translate JSON chat payloads; a
+                    # non-JSON success is a genuine upstream malfunction and
+                    # must surface as an explicit error, not a fake success.
+                    content_type = upstream_response.headers.get("content-type", "")
+                    if "json" in content_type.lower():
+                        try:
+                            parsed = upstream_response.json()
+                        except ValueError:
+                            parsed = None
+                        if isinstance(parsed, dict):
+                            chat_body = parsed
+                    if chat_body is None:
+                        _safe_record(
+                            store=store,
+                            request_id=request_id,
+                            started=started,
+                            model=model,
+                            path=path,
+                            stream=stream,
+                            result=result,
+                            status_code=502,
+                            source=source,
+                            client_host=client_host,
+                            profile=profile,
+                            provider=provider,
+                            error=f"BridgeError: upstream returned non-JSON response (HTTP {status_code})",
+                        )
+                        return JSONResponse(
+                            {
+                                "error": {
+                                    "message": "CTC bridge upstream returned a non-JSON response",
+                                    "type": "upstream_error",
+                                }
+                            },
+                            status_code=502,
+                        )
                     response_body = chat_completions_to_response(
                         chat_body,
                         model=chat_request.body["model"],
@@ -622,8 +737,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                     assistant_message = chat_message_from_response(chat_body)
                     if assistant_message is not None:
                         response_state_cache.set(response_body["id"], [*chat_request.source_messages, assistant_message])
-                    _record(
-                        store,
+                    _safe_record(
+                        store=store,
                         request_id=request_id,
                         started=started,
                         model=model,
@@ -660,8 +775,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                             media_type="text/event-stream",
                         )
                     return JSONResponse(response_body, status_code=status_code)
-                _record(
-                    store,
+                _safe_record(
+                    store=store,
                     request_id=request_id,
                     started=started,
                     model=model,
@@ -691,6 +806,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 outbound_body,
                 provider,
                 forwarded_user_agent=settings.forwarded_user_agent,
+                proxy_token=settings.proxy_token,
             )
 
             if stream:
@@ -717,8 +833,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                     finally:
                         await upstream_cm.__aexit__(None, None, None)
                         audit.finish()
-                        _record(
-                            store,
+                        _safe_record(
+                            store=store,
                             request_id=request_id,
                             started=started,
                             model=model,
@@ -754,8 +870,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 provider=provider,
             )
             status_code = upstream_response.status_code
-            _record(
-                store,
+            _safe_record(
+                store=store,
                 request_id=request_id,
                 started=started,
                 model=model,
@@ -768,7 +884,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 profile=profile,
                 provider=provider,
                 metering=build_counterfactual_metering(
-                    usage_snapshot_from_body(upstream_response.json(), source_hint="responses_json"),
+                    _safe_usage_snapshot(upstream_response, source_hint="responses_json"),
                     estimated_saved_input_tokens=result.estimated_saved_tokens,
                 ),
             )
@@ -784,8 +900,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
         except HTTPException:
             raise
         except Exception as exc:
-            _record(
-                store,
+            _safe_record(
+                store=store,
                 request_id=request_id,
                 started=started,
                 model=model,
@@ -811,6 +927,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
         path = "/v1/chat/completions"
         result: CompressionResult | None = None
         model = ""
+        stream = False
         status_code = 502
         client_host = _client_host(request, settings)
         source = _source_label(client_host)
@@ -819,6 +936,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
             raw = await _read_body_limited(request, settings.max_body_bytes)
             body = _decode_json_object(raw, "Chat")
             model = _model_name(body)
+            stream = _is_streaming_request(body)
             result = compress_chat_body(
                 body,
                 threshold_chars=settings.compress_threshold_chars,
@@ -836,7 +954,60 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 outbound_body,
                 provider,
                 forwarded_user_agent=settings.forwarded_user_agent,
+                proxy_token=settings.proxy_token,
             )
+            if stream:
+                # Streaming chat completions must be relayed as a live SSE
+                # stream; buffering them here used to surface as an HTTP 200
+                # carrying an error body after the upstream had succeeded.
+                upstream_cm = client.stream("POST", upstream_url, headers=headers, content=outbound_body)
+                upstream_response = await upstream_cm.__aenter__()
+                status_code = upstream_response.status_code
+                audit = _StreamAudit(
+                    request_id=request_id,
+                    path=path,
+                    model=model,
+                    status_code=status_code,
+                    source=source,
+                    client_host=client_host,
+                    profile=profile,
+                    provider=provider,
+                )
+
+                async def iter_chat_stream():
+                    try:
+                        async for chunk in upstream_response.aiter_bytes():
+                            audit.feed(chunk)
+                            yield chunk
+                    finally:
+                        await upstream_cm.__aexit__(None, None, None)
+                        audit.finish()
+                        _safe_record(
+                            store=store,
+                            request_id=request_id,
+                            started=started,
+                            model=model,
+                            path=path,
+                            stream=True,
+                            result=result,
+                            status_code=status_code,
+                            source=source,
+                            client_host=client_host,
+                            profile=profile,
+                            provider=provider,
+                            metering=build_counterfactual_metering(
+                                audit.usage_snapshot,
+                                estimated_saved_input_tokens=result.estimated_saved_tokens if result else 0,
+                            ),
+                        )
+
+                return StreamingResponse(
+                    iter_chat_stream(),
+                    status_code=status_code,
+                    headers=_response_headers(upstream_response.headers),
+                    media_type=upstream_response.headers.get("content-type"),
+                )
+
             upstream_response = await _request_with_upstream_retry(
                 client,
                 "POST",
@@ -848,8 +1019,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 provider=provider,
             )
             status_code = upstream_response.status_code
-            _record(
-                store,
+            _safe_record(
+                store=store,
                 request_id=request_id,
                 started=started,
                 model=model,
@@ -862,8 +1033,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 profile=profile,
                 provider=provider,
                 metering=build_counterfactual_metering(
-                    usage_snapshot_from_body(upstream_response.json(), source_hint="chat_json"),
-                    estimated_saved_input_tokens=result.estimated_saved_tokens,
+                    _safe_usage_snapshot(upstream_response, source_hint="chat_json"),
+                    estimated_saved_input_tokens=result.estimated_saved_tokens if result else 0,
                 ),
             )
             normalized_resp = _normalized_json_response(upstream_response, status_code=status_code)
@@ -875,14 +1046,16 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 headers=_response_headers(upstream_response.headers),
                 media_type=upstream_response.headers.get("content-type"),
             )
+        except HTTPException:
+            raise
         except Exception as exc:
-            _record(
-                store,
+            _safe_record(
+                store=store,
                 request_id=request_id,
                 started=started,
                 model=model,
                 path=path,
-                stream=False,
+                stream=stream,
                 result=result,
                 status_code=status_code,
                 source=source,
@@ -893,19 +1066,26 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
             )
             return JSONResponse(
                 {"error": {"message": "CTC upstream request failed", "type": "upstream_error"}},
-                status_code=status_code if status_code != 502 else 502,
+                status_code=502,
             )
 
     @router.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     async def transparent_v1_proxy(path: str, request: Request) -> Response:
         request_id = str(uuid.uuid4())
         started = time.perf_counter()
-        full_path = f"/v1/{path}"
+        full_path = _normalize_proxy_path(path)
         status_code = 502
         stream = False
         client_host = _client_host(request, settings)
         source = _source_label(client_host)
         profile = choose_profile(request, client_host)
+        if full_path is None:
+            # Dot segments could escape the /v1 scoping and reach arbitrary
+            # paths on the upstream origin.
+            return JSONResponse(
+                {"error": {"message": "invalid request path", "type": "invalid_request_error"}},
+                status_code=404,
+            )
         try:
             raw = await _read_body_limited(request, settings.max_body_bytes)
             provider = provider_store.provider_for_host(client_host)
@@ -916,8 +1096,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
             ):
                 requested_model = full_path.removeprefix("/v1/models/").strip("/") if full_path != "/v1/models" else ""
                 status_code = 200
-                _record(
-                    store,
+                _safe_record(
+                    store=store,
                     request_id=request_id,
                     started=started,
                     model="",
@@ -946,6 +1126,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                     request,
                     provider=provider,
                     forwarded_user_agent=settings.forwarded_user_agent,
+                    proxy_token=settings.proxy_token,
                 ),
                 content=raw,
                 request_id=request_id,
@@ -953,8 +1134,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 provider=provider,
             )
             status_code = upstream_response.status_code
-            _record(
-                store,
+            _safe_record(
+                store=store,
                 request_id=request_id,
                 started=started,
                 model="",
@@ -967,7 +1148,7 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
                 profile=profile,
                 provider=provider,
                 metering=build_counterfactual_metering(
-                    usage_snapshot_from_body(upstream_response.json(), source_hint="transparent_json"),
+                    _safe_usage_snapshot(upstream_response, source_hint="transparent_json"),
                     estimated_saved_input_tokens=0,
                 ),
             )
@@ -980,8 +1161,8 @@ def create_proxy_router(settings: Settings, store: CtcStore, provider_store: Pro
         except HTTPException:
             raise
         except Exception as exc:
-            _record(
-                store,
+            _safe_record(
+                store=store,
                 request_id=request_id,
                 started=started,
                 model="",

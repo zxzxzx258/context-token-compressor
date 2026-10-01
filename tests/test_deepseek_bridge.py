@@ -218,7 +218,8 @@ def test_thinking_mode_filters_sampling_params_and_maps_supported_effort():
     converted = responses_to_chat_completions(body, model="deepseek-v4-pro")
 
     assert converted.body["thinking"] == {"type": "enabled"}
-    assert converted.body["reasoning_effort"] == "max"
+    # DeepSeek maps xhigh -> high per its documented effort mapping.
+    assert converted.body["reasoning_effort"] == "high"
     assert converted.body["max_tokens"] == 64
     assert "temperature" not in converted.body
     assert "top_p" not in converted.body
@@ -311,3 +312,175 @@ def test_response_state_cache_finds_previous_messages_by_tool_call_id():
     found = cache.get_for_tool_outputs([{"type": "function_call_output", "call_id": "call_lookup", "output": "done"}])
 
     assert found[1]["reasoning_content"] == "must replay"
+
+
+def test_continuation_turn_keeps_single_system_message_before_tool_context():
+    instructions = "You are a coding agent."
+    previous_messages = [
+        {"role": "system", "content": instructions},
+        {"role": "user", "content": "list files"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "shell", "arguments": "{\"cmd\":\"ls\"}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "a.txt\nb.txt"},
+    ]
+    body = {
+        "model": "deepseek-v4-pro",
+        "instructions": instructions,
+        "input": [{"type": "function_call_output", "call_id": "call_1", "output": "a.txt\nb.txt"}],
+    }
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro", previous_messages=previous_messages)
+
+    messages = converted.body["messages"]
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "tool"]
+    assert messages[0]["content"] == instructions
+    assert sum(1 for m in messages if m.get("role") == "system") == 1
+    # The tool message stays directly after the assistant tool_calls message.
+    assert messages[3]["tool_call_id"] == "call_1"
+
+
+def test_replayed_tool_output_already_in_history_is_not_duplicated():
+    previous_messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "list files"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "a.txt"},
+    ]
+    body = {"model": "deepseek-v4-pro", "input": [{"type": "function_call_output", "call_id": "call_1", "output": "a.txt"}]}
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro", previous_messages=previous_messages)
+
+    tool_messages = [m for m in converted.body["messages"] if m.get("role") == "tool"]
+    assert len(tool_messages) == 1
+
+
+def test_tool_choice_object_form_is_converted_to_chat_shape():
+    body = {
+        "model": "deepseek-v4-pro",
+        "input": "hi",
+        "tools": [{"type": "function", "name": "shell", "description": "run", "parameters": {"type": "object"}}],
+        "tool_choice": {"type": "function", "name": "shell"},
+    }
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro")
+
+    assert converted.body["tool_choice"] == {"type": "function", "function": {"name": "shell"}}
+
+
+def test_tool_choice_string_form_is_normalized():
+    body = {
+        "model": "deepseek-v4-pro",
+        "input": "hi",
+        "tools": [{"type": "function", "name": "shell", "description": "", "parameters": {}}],
+        "tool_choice": "required",
+    }
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro")
+
+    assert converted.body["tool_choice"] == "required"
+
+
+def test_truncated_chat_response_maps_to_incomplete():
+    response = chat_completions_to_response(
+        {
+            "choices": [{"finish_reason": "length", "message": {"role": "assistant", "content": "partial"}}],
+        },
+        model="deepseek-v4-flash",
+    )
+
+    assert response["status"] == "incomplete"
+    assert response["incomplete_details"] == {"reason": "max_output_tokens"}
+    assert response["output"][0]["status"] == "incomplete"
+
+
+def test_completed_chat_response_keeps_completed_status():
+    response = chat_completions_to_response(
+        {
+            "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "done"}}],
+        },
+        model="deepseek-v4-flash",
+    )
+
+    assert response["status"] == "completed"
+    assert "incomplete_details" not in response
+
+
+def test_user_image_input_becomes_chat_image_url_part():
+    body = {
+        "model": "deepseek-v4-pro",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "what is in this image?"},
+                    {"type": "input_image", "image_url": "data:image/jpeg;base64,QUJD", "detail": "high"},
+                ],
+            }
+        ],
+    }
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro")
+
+    content = converted.body["messages"][0]["content"]
+    assert content[0] == {"type": "text", "text": "what is in this image?"}
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,QUJD", "detail": "high"},
+    }
+
+
+def test_assistant_image_content_degrades_to_placeholder_text():
+    body = {
+        "model": "deepseek-v4-pro",
+        "input": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "input_text", "text": "I generated this:"},
+                    {"type": "input_image", "image_url": "https://example.com/img.png"},
+                ],
+            }
+        ],
+    }
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro")
+
+    content = converted.body["messages"][0]["content"]
+    assert "I generated this:" in content
+    assert "[image: https://example.com/img.png]" in content
+
+
+def test_structured_tool_output_becomes_json_string():
+    body = {"model": "deepseek-v4-pro", "input": [{"type": "function_call_output", "call_id": "c1", "output": {"key": "val"}}]}
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro")
+
+    assert converted.body["messages"][0]["content"] == '{"key": "val"}'
+
+
+def test_thinking_with_tools_backfills_reasoning_content_for_plain_assistant_turns():
+    body = {
+        "model": "deepseek-v4-pro",
+        "thinking": {"type": "enabled"},
+        "input": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "run a tool"},
+        ],
+        "tools": [{"type": "function", "name": "shell", "description": "", "parameters": {"type": "object"}}],
+    }
+
+    converted = responses_to_chat_completions(body, model="deepseek-v4-pro")
+
+    assistants = [m for m in converted.body["messages"] if m.get("role") == "assistant"]
+    assert assistants
+    assert all("reasoning_content" in m for m in assistants)

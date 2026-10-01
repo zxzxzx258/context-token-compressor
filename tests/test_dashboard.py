@@ -531,3 +531,15 @@ def test_index_routing_add_keeps_wildcard_rule_as_draft():
     assert "providerRouting.rules[host] = pid" not in add_function
     assert "data-routing-draft" in add_function
     assert "data-routing-create" in add_function
+
+
+def test_dashboard_rejects_invalid_range_params(tmp_path, monkeypatch):
+    monkeypatch.setenv("CTC_DB_PATH", str(tmp_path / "ctc.sqlite3"))
+    app = create_dashboard_app()
+    client = _dashboard_client(app)
+
+    res = client.get("/api/dashboard", params={"since": "garbage"})
+    assert res.status_code == 400
+
+    res = client.get("/api/dashboard", params={"since": "2026-06-20T00:00:00+00:00", "until": "2026-06-01T00:00:00+00:00"})
+    assert res.status_code == 400

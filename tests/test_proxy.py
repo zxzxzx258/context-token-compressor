@@ -1141,10 +1141,19 @@ def test_proxy_retries_retryable_upstream_502_once(tmp_path, monkeypatch):
         upstream_server.should_exit = True
 
 
-def test_retryable_upstream_exception_includes_httpx_network_errors():
+def test_retryable_upstream_exception_is_limited_to_connect_phase_errors():
     import ctc.proxy as proxy_module
 
-    assert proxy_module._is_retryable_upstream_exception(httpx.WriteTimeout("write timed out"))
+    # Connect-phase failures cannot have been processed upstream, so one
+    # retry is safe.
+    assert proxy_module._is_retryable_upstream_exception(httpx.ConnectError("connection failed"))
+    assert proxy_module._is_retryable_upstream_exception(httpx.ConnectTimeout("connect timed out"))
+    assert proxy_module._is_retryable_upstream_exception(httpx.PoolTimeout("pool timed out"))
+    # Post-delivery failures can mean the completion already ran and billed;
+    # retrying them risks double charges.
+    assert not proxy_module._is_retryable_upstream_exception(httpx.WriteTimeout("write timed out"))
+    assert not proxy_module._is_retryable_upstream_exception(httpx.ReadTimeout("read timed out"))
+    assert not proxy_module._is_retryable_upstream_exception(httpx.ReadError("read failed"))
     assert not proxy_module._is_retryable_upstream_exception(ValueError("not a network error"))
 
 
@@ -1215,6 +1224,137 @@ def test_chat_completions_compresses_and_forwards(tmp_path, monkeypatch):
         assert compressed_items == 1
         assert passthrough_items == 1
         assert saved_tokens > 0
+    finally:
+        proxy_server.should_exit = True
+        upstream_server.should_exit = True
+
+
+def test_chat_completions_stream_passthrough(tmp_path, monkeypatch):
+    upstream_port = _free_port()
+    upstream = FastAPI()
+
+    @upstream.post("/v1/chat/completions")
+    async def chat(request: Request):
+        body = await request.json()
+        assert body["stream"] is True
+
+        async def events():
+            yield b'data: {"choices": [{"delta": {"content": "hello"}}]}\n\n'
+            yield b'data: {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    upstream_server = _run_app(upstream, upstream_port)
+    proxy_port = _free_port()
+    db_path = tmp_path / "ctc.sqlite3"
+    monkeypatch.setenv("CTC_UPSTREAM_BASE_URL", f"http://127.0.0.1:{upstream_port}/v1")
+    monkeypatch.setenv("CTC_PROXY_PORT", str(proxy_port))
+    monkeypatch.setenv("CTC_DB_PATH", str(db_path))
+    proxy_server = _run_app(create_proxy_app(), proxy_port)
+    try:
+        payload = {"model": "gpt-5.5", "stream": True, "messages": [{"role": "user", "content": "hi"}]}
+        with httpx.stream("POST", f"http://127.0.0.1:{proxy_port}/v1/chat/completions", json=payload, timeout=20) as res:
+            body = b"".join(res.iter_bytes())
+        assert res.status_code == 200
+        assert res.headers["content-type"].startswith("text/event-stream")
+        assert b'"delta"' in body
+        assert b"[DONE]" in body
+        with sqlite3.connect(db_path) as con:
+            row = con.execute(
+                "select stream, status_code, actual_total_tokens from request_stats where path = '/v1/chat/completions'"
+            ).fetchone()
+        assert row[0] == 1
+        assert row[1] == 200
+        assert row[2] == 5
+    finally:
+        proxy_server.should_exit = True
+        upstream_server.should_exit = True
+
+
+def test_transparent_proxy_rejects_path_traversal(tmp_path, monkeypatch):
+    upstream_port = _free_port()
+    hits = []
+    upstream = FastAPI()
+
+    @upstream.get("/admin")
+    async def admin():
+        hits.append(1)
+        return {"secret": True}
+
+    @upstream.get("/v1/models")
+    async def models():
+        return {"data": []}
+
+    upstream_server = _run_app(upstream, upstream_port)
+    proxy_port = _free_port()
+    monkeypatch.setenv("CTC_UPSTREAM_BASE_URL", f"http://127.0.0.1:{upstream_port}/v1")
+    monkeypatch.setenv("CTC_PROXY_PORT", str(proxy_port))
+    monkeypatch.setenv("CTC_DB_PATH", str(tmp_path / "ctc.sqlite3"))
+    proxy_server = _run_app(create_proxy_app(), proxy_port)
+    try:
+        res = httpx.get(f"http://127.0.0.1:{proxy_port}/v1/..%2Fadmin", timeout=20)
+        assert res.status_code == 404
+        assert hits == []
+    finally:
+        proxy_server.should_exit = True
+        upstream_server.should_exit = True
+
+
+def test_proxy_consumes_own_proxy_token_on_loopback(tmp_path, monkeypatch):
+    upstream_port = _free_port()
+    captured = {}
+    upstream = FastAPI()
+
+    @upstream.post("/v1/responses")
+    async def responses(request: Request):
+        captured["authorization"] = request.headers.get("authorization")
+        return JSONResponse({"id": "ok", "output": []})
+
+    upstream_server = _run_app(upstream, upstream_port)
+    proxy_port = _free_port()
+    monkeypatch.setenv("CTC_UPSTREAM_BASE_URL", f"http://127.0.0.1:{upstream_port}/v1")
+    monkeypatch.setenv("CTC_PROXY_PORT", str(proxy_port))
+    monkeypatch.setenv("CTC_DB_PATH", str(tmp_path / "ctc.sqlite3"))
+    monkeypatch.setenv("CTC_PROXY_TOKEN", "secret-proxy-token")
+    proxy_server = _run_app(create_proxy_app(), proxy_port)
+    try:
+        payload = {"model": "gpt-5.5", "input": [{"role": "user", "content": "hi"}]}
+        res = httpx.post(
+            f"http://127.0.0.1:{proxy_port}/v1/responses",
+            headers={"authorization": "Bearer secret-proxy-token"},
+            json=payload,
+            timeout=20,
+        )
+        assert res.status_code == 200
+        # The CTC proxy token must never be forwarded upstream, even on the
+        # loopback listener where no auth middleware is installed.
+        assert captured["authorization"] is None
+    finally:
+        proxy_server.should_exit = True
+        upstream_server.should_exit = True
+
+
+def test_non_json_upstream_success_is_not_masked_as_502(tmp_path, monkeypatch):
+    upstream_port = _free_port()
+    upstream = FastAPI()
+
+    @upstream.api_route("/v1/files/{file_id}/content", methods=["GET"])
+    async def content(file_id: str):
+        from fastapi import Response
+
+        return Response(content=b"\x00\x01binary", status_code=200, media_type="application/octet-stream")
+
+    upstream_server = _run_app(upstream, upstream_port)
+    proxy_port = _free_port()
+    monkeypatch.setenv("CTC_UPSTREAM_BASE_URL", f"http://127.0.0.1:{upstream_port}/v1")
+    monkeypatch.setenv("CTC_PROXY_PORT", str(proxy_port))
+    monkeypatch.setenv("CTC_DB_PATH", str(tmp_path / "ctc.sqlite3"))
+    proxy_server = _run_app(create_proxy_app(), proxy_port)
+    try:
+        res = httpx.get(f"http://127.0.0.1:{proxy_port}/v1/files/abc/content", timeout=20)
+        assert res.status_code == 200
+        assert res.content == b"\x00\x01binary"
     finally:
         proxy_server.should_exit = True
         upstream_server.should_exit = True

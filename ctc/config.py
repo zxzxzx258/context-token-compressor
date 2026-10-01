@@ -22,6 +22,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -126,8 +136,8 @@ def load_settings() -> Settings:
         db_path=db_path,
         compress_threshold_chars=_env_int("CTC_COMPRESS_THRESHOLD_CHARS", 2000),
         compress_target_chars=_env_int("CTC_COMPRESS_TARGET_CHARS", 10000),
-        request_timeout_seconds=float(os.getenv("CTC_REQUEST_TIMEOUT_SECONDS", "240")),
-        stream_timeout_seconds=float(os.getenv("CTC_STREAM_TIMEOUT_SECONDS", "600")),
+        request_timeout_seconds=_env_float("CTC_REQUEST_TIMEOUT_SECONDS", 240.0),
+        stream_timeout_seconds=_env_float("CTC_STREAM_TIMEOUT_SECONDS", 600.0),
         trust_env_proxy=_env_bool("CTC_TRUST_ENV_PROXY", False),
         profile_rules=ProfileRules(
             default=normalize_profile(os.getenv("CTC_DEFAULT_PROFILE"), PROFILE_SAFE),

@@ -74,13 +74,31 @@ def responses_to_chat_completions(body: dict[str, Any], *, model: str, previous_
     messages: list[Message] = _copy_messages(previous_messages or [])
     instructions = body.get("instructions")
     if isinstance(instructions, str) and instructions.strip():
-        messages.append({"role": "system", "content": instructions})
+        # Continuation turns already carry the system message from the cached
+        # history. Replace it in place instead of appending, otherwise the
+        # system prompt lands after assistant tool_calls and DeepSeek rejects
+        # the tool message that follows it.
+        system_index = next(
+            (index for index, message in enumerate(messages) if message.get("role") == "system"),
+            None,
+        )
+        system_message: Message = {"role": "system", "content": instructions}
+        if system_index is None:
+            messages.insert(0, system_message)
+        else:
+            messages[system_index] = system_message
     thinking_enabled = _thinking_enabled(body)
     known_tool_call_ids = _tool_call_ids_from_messages(messages)
+    known_tool_output_ids = {
+        str(message.get("tool_call_id"))
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "tool" and message.get("tool_call_id")
+    }
     messages.extend(
         _input_to_messages(
             body.get("input"),
             skip_function_call_ids=known_tool_call_ids,
+            skip_tool_output_ids=known_tool_output_ids,
             ensure_reasoning_for_tool_calls=thinking_enabled,
         )
     )
@@ -91,7 +109,7 @@ def responses_to_chat_completions(body: dict[str, Any], *, model: str, previous_
         "stream": bool(body.get("stream")),
     }
     _copy_optional(body, chat_body, "thinking")
-    reasoning_effort = _reasoning_effort(body)
+    reasoning_effort = _reasoning_effort(body) if thinking_enabled else ""
     if reasoning_effort:
         chat_body["reasoning_effort"] = reasoning_effort
     if not thinking_enabled:
@@ -104,14 +122,23 @@ def responses_to_chat_completions(body: dict[str, Any], *, model: str, previous_
     _copy_optional(body, chat_body, "stop")
 
     tools = body.get("tools")
+    chat_tools: list[dict[str, Any]] = []
     if isinstance(tools, list) and tools:
-        chat_tools = [_response_tool_to_chat_tool(tool) for tool in tools if isinstance(tool, dict)]
-        chat_tools = [tool for tool in chat_tools if tool]
-        if chat_tools:
-            chat_body["tools"] = chat_tools
-            tool_choice = body.get("tool_choice")
-            if tool_choice is not None:
-                chat_body["tool_choice"] = tool_choice
+        chat_tools = [tool for tool in (_response_tool_to_chat_tool(tool) for tool in tools if isinstance(tool, dict)) if tool]
+    if thinking_enabled and chat_tools:
+        # DeepSeek requires the reasoning_content of every prior assistant
+        # turn (tool turns and plain turns alike) once tools are present;
+        # missing entries make the API return 400 mid-session.
+        for message in messages:
+            if isinstance(message, dict) and message.get("role") == "assistant" and "reasoning_content" not in message:
+                message["reasoning_content"] = ""
+    if chat_tools:
+        chat_body["tools"] = chat_tools
+        tool_choice = body.get("tool_choice")
+        if tool_choice is not None:
+            converted_choice = _tool_choice_to_chat(tool_choice)
+            if converted_choice is not None:
+                chat_body["tool_choice"] = converted_choice
 
     return ChatBridgeRequest(body=chat_body, source_messages=messages)
 
@@ -121,6 +148,18 @@ def chat_completions_to_response(body: dict[str, Any], *, model: str, response_i
     message = choice.get("message") if isinstance(choice, dict) else {}
     if not isinstance(message, dict):
         message = {}
+
+    # A response cut off by max_tokens must not be reported as fully
+    # completed, otherwise clients execute truncated tool-call arguments.
+    finish_reason = str(choice.get("finish_reason") or "").strip().lower() if isinstance(choice, dict) else ""
+    status = "completed"
+    incomplete_details: dict[str, Any] | None = None
+    if finish_reason == "length":
+        status = "incomplete"
+        incomplete_details = {"reason": "max_output_tokens"}
+    elif finish_reason == "content_filter":
+        status = "incomplete"
+        incomplete_details = {"reason": "content_filter"}
 
     output: list[dict[str, Any]] = []
     content = _message_content_text(message.get("content"))
@@ -133,7 +172,7 @@ def chat_completions_to_response(body: dict[str, Any], *, model: str, response_i
             {
                 "id": f"msg_{uuid.uuid4().hex}",
                 "type": "message",
-                "status": "completed",
+                "status": status,
                 "role": "assistant",
                 "content": [output_text],
             }
@@ -148,7 +187,7 @@ def chat_completions_to_response(body: dict[str, Any], *, model: str, response_i
                 "call_id": call_id,
                 "name": tool_call.get("name") or "",
                 "arguments": tool_call.get("arguments") or "{}",
-                "status": "completed",
+                "status": status,
             }
         )
 
@@ -161,8 +200,10 @@ def chat_completions_to_response(body: dict[str, Any], *, model: str, response_i
         "output": output,
         "output_text": content,
         "parallel_tool_calls": True,
-        "status": "completed",
+        "status": status,
     }
+    if incomplete_details is not None:
+        response["incomplete_details"] = incomplete_details
     if usage is not None:
         response["usage"] = {
             "input_tokens": usage.get("prompt_tokens", 0),
@@ -346,9 +387,11 @@ def _input_to_messages(
     value: Any,
     *,
     skip_function_call_ids: set[str] | None = None,
+    skip_tool_output_ids: set[str] | None = None,
     ensure_reasoning_for_tool_calls: bool = False,
 ) -> list[Message]:
     skip_function_call_ids = skip_function_call_ids or set()
+    skip_tool_output_ids = skip_tool_output_ids or set()
     if isinstance(value, str):
         return [{"role": "user", "content": value}]
     if isinstance(value, dict):
@@ -399,6 +442,11 @@ def _input_to_messages(
             continue
         if item.get("type") == "function_call_output":
             call_id = str(item.get("call_id") or item.get("id") or "")
+            if call_id and call_id in skip_tool_output_ids:
+                # The cached history already carries this tool output; the
+                # client is replaying it. Appending would duplicate the tool
+                # message and break the continuation turn.
+                continue
             message = _input_item_to_message(item, ensure_reasoning_for_tool_calls=ensure_reasoning_for_tool_calls)
             if call_id and call_id in pending_tool_call_ids and message:
                 pending_tool_outputs.append(message)
@@ -431,7 +479,8 @@ def _input_item_to_message(item: dict[str, Any], *, ensure_reasoning_for_tool_ca
         }
     role = item.get("role")
     if role in {"system", "user", "assistant", "tool"}:
-        message: Message = {"role": role, "content": _content_to_text(item.get("content"))}
+        content = _content_parts_for_role(role, item.get("content"))
+        message: Message = {"role": role, "content": content}
         if role == "assistant":
             reasoning_content = _reasoning_content_from_content(item.get("content"))
             if reasoning_content:
@@ -444,9 +493,13 @@ def _input_item_to_message(item: dict[str, Any], *, ensure_reasoning_for_tool_ca
         if role == "tool" and item.get("tool_call_id"):
             message["tool_call_id"] = str(item.get("tool_call_id"))
         return message
+    if item_type in {"input_image", "image_url"}:
+        return {"role": "user", "content": [_image_part_to_chat(item)]}
+    if item_type in {"input_file", "file"}:
+        return {"role": "user", "content": [_file_part_to_chat(item)]}
     if item_type == "message":
         role = item.get("role") if item.get("role") in {"system", "user", "assistant"} else "user"
-        message: Message = {"role": role, "content": _content_to_text(item.get("content"))}
+        message: Message = {"role": role, "content": _content_parts_for_role(role, item.get("content"))}
         if role == "assistant":
             reasoning_content = _reasoning_content_from_content(item.get("content"))
             if reasoning_content:
@@ -460,6 +513,96 @@ def _input_item_to_message(item: dict[str, Any], *, ensure_reasoning_for_tool_ca
     return None
 
 
+def _image_part_text(part: dict[str, Any]) -> str:
+    url = part.get("image_url")
+    if isinstance(url, dict):
+        url = url.get("url")
+    url = str(url or "")
+    if url.startswith("data:"):
+        return f"[image: inline data, {len(url)} chars]"
+    return f"[image: {url}]" if url else "[image]"
+
+
+def _file_part_text(part: dict[str, Any]) -> str:
+    filename = part.get("filename")
+    if not isinstance(filename, str) or not filename:
+        file_id = part.get("file_id")
+        filename = str(file_id) if file_id else "unknown"
+    return f"[file: {filename}]"
+
+
+def _image_part_to_chat(item: dict[str, Any]) -> dict[str, Any]:
+    # Responses carries images as {"type": "input_image", "image_url": "<url>"}
+    # (plain string); Chat Completions wraps the url in an object.
+    url = item.get("image_url")
+    if isinstance(url, dict):
+        url = url.get("url")
+    if isinstance(url, str) and url:
+        image_url: dict[str, Any] = {"url": url}
+        detail = item.get("detail")
+        if isinstance(detail, str) and detail:
+            image_url["detail"] = detail
+        return {"type": "image_url", "image_url": image_url}
+    file_id = item.get("file_id")
+    if isinstance(file_id, str) and file_id:
+        return {"type": "file", "file_id": file_id}
+    return {"type": "text", "text": _image_part_text(item)}
+
+
+def _file_part_to_chat(item: dict[str, Any]) -> dict[str, Any]:
+    file_part: dict[str, Any] = {"type": "file"}
+    if isinstance(item.get("file_id"), str) and item["file_id"]:
+        file_part["file_id"] = item["file_id"]
+    if isinstance(item.get("file_data"), str) and item["file_data"]:
+        file_part["file_data"] = item["file_data"]
+    if isinstance(item.get("filename"), str) and item["filename"]:
+        file_part["filename"] = item["filename"]
+    if len(file_part) > 1:
+        return file_part
+    return {"type": "text", "text": _file_part_text(item)}
+
+
+def _content_parts_for_role(role: str, value: Any) -> Any:
+    """Convert Responses content into Chat content for the given role.
+
+    User messages keep image/file parts in Chat Completions form — DeepSeek
+    vision accepts them in user messages only. Every other role degrades
+    non-text parts to text placeholders because DeepSeek rejects images in
+    system/assistant/tool messages.
+    """
+    if role != "user":
+        return _content_to_text(value)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return _content_to_text(value)
+    if not isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False)
+    parts: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, str):
+            parts.append({"type": "text", "text": item})
+            continue
+        if not isinstance(item, dict):
+            continue
+        part_type = item.get("type")
+        if part_type in {"input_text", "text"} and isinstance(item.get("text"), str):
+            parts.append({"type": "text", "text": item["text"]})
+        elif part_type in {"input_image", "image_url"}:
+            parts.append(_image_part_to_chat(item))
+        elif part_type in {"input_file", "file"}:
+            parts.append(_file_part_to_chat(item))
+        else:
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                parts.append({"type": "text", "text": text})
+    if parts and all(part.get("type") == "text" for part in parts):
+        return "\n".join(part["text"] for part in parts if part.get("text"))
+    return parts
+
+
 def _content_to_text(value: Any) -> str:
     if value is None:
         return ""
@@ -471,10 +614,20 @@ def _content_to_text(value: Any) -> str:
             if isinstance(item, str):
                 parts.append(item)
             elif isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
+                part_type = item.get("type")
+                if part_type in {"input_image", "image_url"}:
+                    parts.append(_image_part_text(item))
+                elif part_type in {"input_file", "file"}:
+                    parts.append(_file_part_text(item))
+                else:
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
         return "\n".join(part for part in parts if part)
+    if isinstance(value, dict):
+        # Tolerant clients send structured payloads (e.g. output objects); a
+        # Python repr would not be parseable as JSON by the model.
+        return json.dumps(value, ensure_ascii=False)
     return str(value)
 
 
@@ -504,6 +657,8 @@ def _message_content_text(value: Any) -> str:
         return value
     if isinstance(value, list):
         return _content_to_text(value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
     return str(value)
 
 
@@ -598,6 +753,19 @@ def _response_tool_to_chat_tool(tool: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _tool_choice_to_chat(value: Any) -> Any | None:
+    # Responses object form is {"type": "function", "name": ...}; Chat
+    # Completions nests the name under "function".
+    if isinstance(value, dict) and value.get("type") == "function":
+        name = value.get("name")
+        if isinstance(name, str) and name:
+            return {"type": "function", "function": {"name": name}}
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"auto", "none", "required"}:
+        return value.strip().lower()
+    return value
+
+
 def _copy_optional(source: dict[str, Any], target: dict[str, Any], key: str, *, target_key: str | None = None) -> None:
     if key in source:
         target[target_key or key] = source[key]
@@ -610,6 +778,19 @@ def _thinking_enabled(body: dict[str, Any]) -> bool:
     return True
 
 
+# DeepSeek documents these effort mappings for thinking mode:
+# minimal→low, medium→high, xhigh→high, ultra→max.
+DEEPSEEK_REASONING_EFFORTS = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "high",
+    "high": "high",
+    "xhigh": "high",
+    "max": "max",
+    "ultra": "max",
+}
+
+
 def _reasoning_effort(body: dict[str, Any]) -> str:
     effort = body.get("reasoning_effort")
     reasoning = body.get("reasoning")
@@ -617,12 +798,7 @@ def _reasoning_effort(body: dict[str, Any]) -> str:
         effort = reasoning.get("effort")
     if not isinstance(effort, str):
         return ""
-    normalized = effort.strip().lower()
-    if normalized in {"high", "max"}:
-        return normalized
-    if normalized == "xhigh":
-        return "max"
-    return ""
+    return DEEPSEEK_REASONING_EFFORTS.get(effort.strip().lower(), "")
 
 
 def _first_choice(body: dict[str, Any]) -> dict[str, Any]:

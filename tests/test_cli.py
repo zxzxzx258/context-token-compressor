@@ -13,7 +13,7 @@ def test_cli_version(capsys):
         main(["--version"])
 
     assert exc.value.code == 0
-    assert capsys.readouterr().out.strip() == "Context Token Compressor 1.0.0"
+    assert capsys.readouterr().out.strip() == "Context Token Compressor 1.1.0"
 
 
 def test_cli_check_config_is_sanitized(tmp_path, monkeypatch, capsys):
